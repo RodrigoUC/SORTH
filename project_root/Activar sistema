@@ -1,0 +1,15 @@
+Activar el entorno:
+
+CMD:
+c:\Users\Rodri\OneDrive\Desktop\Horas asistente\SORTH\project_root\venv\Scripts\activate.bat
+
+PowerShell:
+. "c:\Users\Rodri\OneDrive\Desktop\Horas asistente\SORTH\project_root\venv\Scripts\Activate.ps1"
+
+Ejecutar tests:
+pytest
+
+Correr el programa:
+cd "c:\Users\Rodri\OneDrive\Desktop\Horas asistente\SORTH\project_root"
+. venv\Scripts\Activate.ps1
+python benchmark.py
