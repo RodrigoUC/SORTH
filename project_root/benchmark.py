@@ -26,7 +26,8 @@ def generate_groups(n):
     groups = []
 
     for i in range(n):
-        room_type = "Laboratory" if random.random() < 0.8 else "Normal"
+        # Match laboratory demand to classroom distribution: 3 labs out of 8 rooms -> 3/8 = 0.375
+        room_type = "Laboratory" if random.random() < 0.375 else "Normal"
         duration = random.choice([2, 3])
 
         groups.append(
