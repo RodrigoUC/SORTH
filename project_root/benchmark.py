@@ -60,7 +60,6 @@ def run_test(num_groups):
     print(f"Time: {end - start:.4f} seconds")
     print("-" * 40)
 
-
 if __name__ == "__main__":
     for n in [10, 15, 20, 25, 30]:
         run_test(n)
