@@ -1,3 +1,5 @@
+# src/scheduling/schedule_state.py
+
 from typing import List
 from .time_model import TimeModel
 from .classroom import Classroom
@@ -21,6 +23,9 @@ class ScheduleState:
         if classroom.room_type != group.required_room_type:
             return False
 
+        if classroom.capacity < group.size:
+            return False
+
         if not self.time_model.is_valid_slot(day, start_block, group.duration):
             return False
 
@@ -30,17 +35,16 @@ class ScheduleState:
         classroom.occupy(day, start_block, group.duration)
 
         group.assignment = (classroom_name, day, start_block)
-
         self.assignments[group.group_id] = group.assignment
 
         return True
 
     def unassign(self, group: Group) -> None:
+
         if group.group_id not in self.assignments:
             return
 
         classroom_name, day, start_block = self.assignments[group.group_id]
-
         classroom = self.classrooms[classroom_name]
 
         classroom.release(day, start_block, group.duration)

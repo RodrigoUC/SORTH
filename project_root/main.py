@@ -1,4 +1,13 @@
-from src.ui.app import run_app
+from src.application.scheduling_service import SchedulingService
+
+
+def main():
+    service = SchedulingService("data/input/horarios.xlsx")
+    assignments = service.run()
+
+    for a in assignments:
+        print(a)
+
 
 if __name__ == "__main__":
-    run_app()
+    main()
