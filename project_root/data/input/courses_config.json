@@ -1,0 +1,32 @@
+{
+  "courses": [
+    {
+      "code": "BIJ400",
+      "name": "Biología General",
+      "number_of_groups": 2,
+      "duration": 2,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ400L",
+      "name": "Laboratorio de Biología",
+      "number_of_groups": 2,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ405P",
+      "name": "Práctica de Biología",
+      "number_of_groups": 1,
+      "duration": 2,
+      "suggested_classroom": null
+    },
+    {
+      "code": "MAT101",
+      "name": "Matemáticas I",
+      "number_of_groups": 3,
+      "duration": 2,
+      "suggested_classroom": null
+    }
+  ]
+}

@@ -1,7 +1,11 @@
 class TimeModel:
 
+    # Fixed order for days of the week
+    DAY_ORDER = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+
     def __init__(self, days: list[str], hours: list[int]):
-        self.days = sorted(days)
+        # Sort days according to DAY_ORDER
+        self.days = self._sort_days(days)
         self.hours = sorted(hours)
 
         self.day_to_index = {d: i + 1 for i, d in enumerate(self.days)}
@@ -12,6 +16,10 @@ class TimeModel:
 
         self.days_count = len(self.days)
         self.blocks_per_day = len(self.hours)
+
+    def _sort_days(self, days: list[str]) -> list[str]:
+        """Sort days according to the week order (Lunes-Sábado)."""
+        return sorted(set(days), key=lambda d: self.DAY_ORDER.index(d) if d in self.DAY_ORDER else 999)
 
     def is_valid_slot(self, day: int, start_block: int, duration: int) -> bool:
         if day < 1 or day > self.days_count:

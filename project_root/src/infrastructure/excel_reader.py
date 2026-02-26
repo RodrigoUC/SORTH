@@ -3,8 +3,10 @@
 from typing import Dict, Tuple
 import pandas as pd
 import re
+import unicodedata
 
 from ..scheduling.classroom import Classroom
+from ..scheduling.course import Course
 
 
 DAY_NAMES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
@@ -82,6 +84,36 @@ class ExcelReader:
 
         return availability
 
+    def load_courses(self) -> list[Course]:
+        """
+        Attempts to read a courses sheet and build Course objects.
+        Falls back to a minimal auto-generated list if no sheet is found.
+        """
+        sheets = pd.read_excel(self.file_path, sheet_name=None)
+        course_df = self._find_courses_sheet(sheets)
+
+        courses = []
+        if course_df is not None:
+            courses = self._build_courses_from_df(course_df)
+
+        if not courses:
+            room_types = {
+                classroom.room_type
+                for classroom in self.load_classrooms().values()
+            }
+            for room_type in sorted(room_types):
+                courses.append(
+                    Course(
+                        code=f"AUTO-{room_type}",
+                        number_of_groups=1,
+                        duration=1,
+                        required_room_type=room_type,
+                        suggested_classroom=None
+                    )
+                )
+
+        return courses
+
     # ----------------------------
     # Internal helpers
     # ----------------------------
@@ -136,10 +168,18 @@ class ExcelReader:
 
             row = df.iloc[row_idx]
             for value in row:
+                if pd.isna(value):
+                    continue
+
                 if isinstance(value, str):
                     value = value.strip()
-                    if value and value not in DAY_NAMES:
+                    if value and value not in DAY_NAMES and value.lower() != "hora":
                         return value
+
+                if isinstance(value, (int, float)):
+                    if isinstance(value, float) and value.is_integer():
+                        value = int(value)
+                    return str(value)
 
         raise ValueError(
             f"Could not determine classroom name near row {header_row_idx}"
@@ -194,3 +234,93 @@ class ExcelReader:
             return int(hour_part)
 
         raise ValueError(f"Unrecognized hour format: {value}")
+
+    def _normalize_header(self, value) -> str:
+        text = str(value).strip().lower()
+        text = unicodedata.normalize("NFKD", text)
+        return "".join(ch for ch in text if not unicodedata.combining(ch))
+
+    def _find_courses_sheet(self, sheets: dict) -> pd.DataFrame | None:
+        candidates = []
+
+        code_keys = ["codigo", "sigla", "curso", "asignatura", "ramo"]
+        group_keys = ["grupo", "grupos", "seccion", "secciones", "paralelo"]
+
+        for name, df in sheets.items():
+            columns = [self._normalize_header(c) for c in df.columns]
+            has_code = any(any(k in col for k in code_keys) for col in columns)
+            has_group = any(any(k in col for k in group_keys) for col in columns)
+
+            if has_code:
+                score = 1 + (1 if has_group else 0)
+                candidates.append((score, name, df))
+
+        if not candidates:
+            return None
+
+        candidates.sort(reverse=True, key=lambda item: item[0])
+        return candidates[0][2]
+
+    def _build_courses_from_df(self, df: pd.DataFrame) -> list[Course]:
+        columns = [self._normalize_header(c) for c in df.columns]
+
+        def find_col(keys):
+            for idx, col in enumerate(columns):
+                if any(k in col for k in keys):
+                    return idx
+            return None
+
+        code_idx = find_col(["codigo", "sigla", "curso", "asignatura", "ramo"])
+        group_idx = find_col(["grupo", "grupos", "seccion", "secciones", "paralelo"])
+        duration_idx = find_col(["duracion", "duración", "horas", "bloques", "dur"])
+        room_idx = find_col(["tipo", "laboratorio", "lab", "sala", "aula"])
+        suggested_idx = find_col(["aula", "sala", "sugerida", "sugerido"])
+
+        courses = []
+
+        for _, row in df.iterrows():
+            if code_idx is None:
+                break
+
+            raw_code = row.iloc[code_idx]
+            if pd.isna(raw_code):
+                continue
+
+            code = str(raw_code).strip()
+            if not code:
+                continue
+
+            raw_groups = row.iloc[group_idx] if group_idx is not None else 1
+            groups = int(raw_groups) if pd.notna(raw_groups) else 1
+
+            raw_duration = row.iloc[duration_idx] if duration_idx is not None else 1
+            duration = int(raw_duration) if pd.notna(raw_duration) else 1
+
+            room_type = "REGULAR"
+            if room_idx is not None:
+                raw_room = row.iloc[room_idx]
+                if pd.notna(raw_room):
+                    raw_room = str(raw_room).strip().lower()
+                    if "lab" in raw_room:
+                        room_type = "LAB"
+
+            suggested = None
+            if suggested_idx is not None:
+                raw_suggested = row.iloc[suggested_idx]
+                if pd.notna(raw_suggested):
+                    suggested = str(raw_suggested).strip()
+
+            if groups < 1 or duration < 1:
+                continue
+
+            courses.append(
+                Course(
+                    code=code,
+                    number_of_groups=groups,
+                    duration=duration,
+                    required_room_type=room_type,
+                    suggested_classroom=suggested
+                )
+            )
+
+        return courses
