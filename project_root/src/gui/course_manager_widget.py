@@ -20,7 +20,43 @@ class CourseDialog(QDialog):
         self.code_history = code_history or []
         self.name_history = name_history or []
         self.duration_history = duration_history or []
+        
+        # Load course name mapping from config JSON
+        self.course_names = self._load_course_names()
+        self.name_to_course = self._load_course_names_reverse()
         self.init_ui()
+    
+    def _load_course_names(self):
+        """Load course code to name mapping from config JSON."""
+        course_data = {}
+        config_path = Path(__file__).parent.parent.parent / "data" / "input" / "courses_config.json"
+        if config_path.exists():
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config_data = json.load(f)
+                    courses = config_data.get("courses", [])
+                    for course in courses:
+                        code = course.get("code")
+                        if code:
+                            course_data[code] = {
+                                "name": course.get("name", ""),
+                                "duration": max(1, course.get("duration", 1))  # Min 1
+                            }
+            except Exception as e:
+                print(f"Error loading course names: {e}")
+        return course_data
+    
+    def _load_course_names_reverse(self):
+        """Load reverse mapping: name → {code, duration}."""
+        name_to_code = {}
+        for code, data in self.course_names.items():
+            name = data.get("name", "")
+            if name:
+                name_to_code[name] = {
+                    "code": code,
+                    "duration": data.get("duration", 1)
+                }
+        return name_to_code
 
     def init_ui(self):
         """Initialize the dialog UI."""
@@ -44,6 +80,7 @@ class CourseDialog(QDialog):
         name_completer = QCompleter(self.name_history)
         name_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.name_edit.setCompleter(name_completer)
+        self.name_edit.textChanged.connect(self.update_code_from_name)
         layout.addRow("Nombre (opcional):", self.name_edit)
 
         # Number of groups
@@ -67,6 +104,7 @@ class CourseDialog(QDialog):
         self.room_type_label.setStyleSheet("color: gray; font-style: italic;")
         self.update_room_type_display()
         self.code_edit.textChanged.connect(self.update_room_type_display)
+        self.code_edit.textChanged.connect(self.update_name_from_code)
         layout.addRow("Tipo de Sala:", self.room_type_label)
 
         # Suggested classroom
@@ -145,6 +183,38 @@ class CourseDialog(QDialog):
         else:
             self.room_type_label.setText("🏫 REGULAR (detectado automáticamente)")
             self.room_type_label.setStyleSheet("color: green;")
+    
+    def update_name_from_code(self):
+        """Auto-fill course name and duration from code if it exists in config."""
+        code = self.code_edit.text().strip()
+        if code and code in self.course_names:
+            course_info = self.course_names[code]
+            # Always replace with the name from config for this code
+            self.name_edit.blockSignals(True)  # Prevent infinite recursion
+            self.name_edit.setText(course_info.get("name", ""))
+            self.name_edit.blockSignals(False)
+            # Update duration from config
+            duration = course_info.get("duration", 1)
+            index = self.duration_combo.findData(duration)
+            if index >= 0:
+                self.duration_combo.setCurrentIndex(index)
+    
+    def update_code_from_name(self):
+        """Auto-fill course code and duration from name if it exists in config."""
+        name = self.name_edit.text().strip()
+        if name and name in self.name_to_course:
+            course_info = self.name_to_course[name]
+            # Always replace with the code from config for this name
+            self.code_edit.blockSignals(True)  # Prevent infinite recursion
+            self.code_edit.setText(course_info.get("code", ""))
+            self.code_edit.blockSignals(False)
+            # Update duration from config
+            duration = course_info.get("duration", 1)
+            index = self.duration_combo.findData(duration)
+            if index >= 0:
+                self.duration_combo.setCurrentIndex(index)
+            # Update room type display
+            self.update_room_type_display()
 
     def get_course_data(self):
         """Get the course data from the form."""
@@ -243,16 +313,26 @@ class CourseManagerWidget(QWidget):
         self.setLayout(layout)
 
     def _load_history(self):
-        """Load course history from file."""
-        if self.HISTORY_FILE.exists():
+        """Load available courses from config JSON."""
+        # Load available courses from config JSON only
+        config_path = Path(__file__).parent.parent.parent / "data" / "input" / "courses_config.json"
+        if config_path.exists():
             try:
-                with open(self.HISTORY_FILE, 'r', encoding='utf-8') as f:
-                    history = json.load(f)
-                    self.code_history = history.get("codes", [])
-                    self.name_history = history.get("names", [])
-                    self.duration_history = history.get("durations", [])
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config_data = json.load(f)
+                    courses = config_data.get("courses", [])
+                    
+                    # Add course codes and names to suggestions
+                    for course in courses:
+                        code = course.get("code")
+                        name = course.get("name")
+                        
+                        if code:
+                            self.code_history.append(code)
+                        if name:
+                            self.name_history.append(name)
             except Exception as e:
-                print(f"Error loading history: {e}")
+                print(f"Error loading courses config: {e}")
 
     def _save_history(self):
         """Save course history to file."""

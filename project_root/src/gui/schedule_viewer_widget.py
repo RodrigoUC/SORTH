@@ -137,6 +137,15 @@ class ScheduleViewerWidget(QWidget):
         # Update summary (for the popup)
         self._update_summary(assignments)
 
+    def _normalize_group_id(self, group_id: str) -> str:
+        """Hide internal subgroup suffix (e.g., -P2) in displayed group IDs."""
+        return group_id.split('-P', 1)[0]
+
+    def _extract_group_num(self, group_id: str) -> str:
+        """Extract displayed group number from group_id without subgroup suffix."""
+        normalized = self._normalize_group_id(group_id)
+        return normalized.rsplit('-G', 1)[1]
+
     def _display_list_view(self, assignments: Dict[str, Tuple[str, int, int]], 
                            time_model: TimeModel):
         """Display the list view of assignments."""
@@ -151,6 +160,7 @@ class ScheduleViewerWidget(QWidget):
         for group_id, (classroom, day_i, block_i) in sorted(assignments.items()):
             day_name, hour = time_model.to_external(day_i, block_i)
             course_code = group_id.rsplit('-G', 1)[0]
+            display_group_id = self._normalize_group_id(group_id)
             
             # Calculate end hour based on duration
             duration = self.duration_map.get(group_id, 1) if hasattr(self, 'duration_map') else 1
@@ -162,7 +172,7 @@ class ScheduleViewerWidget(QWidget):
                 end_hour_text = "N/A"
             
             self.list_table.setItem(row, 0, QTableWidgetItem(course_code))
-            self.list_table.setItem(row, 1, QTableWidgetItem(group_id))
+            self.list_table.setItem(row, 1, QTableWidgetItem(display_group_id))
             self.list_table.setItem(row, 2, QTableWidgetItem(classroom))
             self.list_table.setItem(row, 3, QTableWidgetItem(day_name))
             self.list_table.setItem(row, 4, QTableWidgetItem(f"{hour}:00"))
@@ -234,7 +244,7 @@ class ScheduleViewerWidget(QWidget):
         for group_id, day_i, block_i in self._grid_classroom_assignments.get(classroom, []):
             day_name, _ = time_model.to_external(day_i, block_i)
             course_code = group_id.rsplit('-G', 1)[0]
-            group_num = group_id.rsplit('-G', 1)[1]
+            group_num = self._extract_group_num(group_id)
             course_name = self.course_name_map.get(group_id)
             if course_name:
                 cell_text = f"{course_code} {course_name} (Grupo {group_num})"

@@ -20,6 +20,15 @@ class ScheduleExporter:
     def __init__(self, time_model: TimeModel):
         self.time_model = time_model
 
+    def _normalize_group_id(self, group_id: str) -> str:
+        """Hide internal subgroup suffix (e.g., -P2) in displayed group IDs."""
+        return group_id.split('-P', 1)[0]
+
+    def _extract_group_num(self, group_id: str) -> str:
+        """Extract displayed group number from group_id without subgroup suffix."""
+        normalized = self._normalize_group_id(group_id)
+        return normalized.rsplit('-G', 1)[1]
+
     def to_excel(self, assignments: Dict[str, Tuple[str, int, int]], 
                  output_path: str,
                  groups=None,
@@ -34,45 +43,49 @@ class ScheduleExporter:
             groups: List of Group objects containing duration information
             include_grid: If True, creates a visual grid/timetable view
         """
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        try:
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
-        # Create duration map from groups
-        duration_map = {}
-        course_name_map = {}
-        if groups:
-            for group in groups:
-                duration_map[group.group_id] = group.duration
-                name_from_group = getattr(group, 'course_name', None)
-                if name_from_group:
-                    course_name_map[group.group_id] = name_from_group
+            # Create duration map from groups
+            duration_map = {}
+            course_name_map = {}
+            if groups:
+                for group in groups:
+                    duration_map[group.group_id] = group.duration
+                    name_from_group = getattr(group, 'course_name', None)
+                    if name_from_group:
+                        course_name_map[group.group_id] = name_from_group
 
-        # Fallback by course code map (from GUI courses)
-        if course_name_by_code is None:
-            course_name_by_code = {}
-        for group_id in assignments.keys():
-            if group_id not in course_name_map:
-                course_code = group_id.rsplit('-G', 1)[0]
-                if course_code in course_name_by_code and course_name_by_code[course_code]:
-                    course_name_map[group_id] = course_name_by_code[course_code]
+            # Fallback by course code map (from GUI courses)
+            if course_name_by_code is None:
+                course_name_by_code = {}
+            for group_id in assignments.keys():
+                if group_id not in course_name_map:
+                    course_code = group_id.rsplit('-G', 1)[0]
+                    if course_code in course_name_by_code and course_name_by_code[course_code]:
+                        course_name_map[group_id] = course_name_by_code[course_code]
 
-        # Create detailed list
-        detailed_df = self._create_detailed_dataframe(assignments, duration_map)
+            # Create detailed list
+            detailed_df = self._create_detailed_dataframe(assignments, duration_map)
 
-        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-            # Grid sheets by classroom - if requested
-            if include_grid:
-                self._write_classroom_grid_sheets(writer, assignments, duration_map, course_name_map)
+            with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+                # Grid sheets by classroom - if requested
+                if include_grid:
+                    self._write_classroom_grid_sheets(writer, assignments, duration_map, course_name_map)
 
-            # Sheet 2: Detailed list
-            detailed_df.to_excel(writer, sheet_name='Asignaciones', index=False)
-            self._format_detailed_sheet(writer, 'Asignaciones', len(detailed_df))
+                # Sheet 2: Detailed list
+                detailed_df.to_excel(writer, sheet_name='Asignaciones', index=False)
+                self._format_detailed_sheet(writer, 'Asignaciones', len(detailed_df))
 
-            # Sheet 3: Summary by classroom
-            classroom_summary = self._create_classroom_summary(assignments, duration_map)
-            classroom_summary.to_excel(writer, sheet_name='Por Aula', index=False)
-            self._format_classroom_sheet(writer, 'Por Aula', len(classroom_summary))
+                # Sheet 3: Summary by classroom
+                classroom_summary = self._create_classroom_summary(assignments, duration_map)
+                classroom_summary.to_excel(writer, sheet_name='Por Aula', index=False)
+                self._format_classroom_sheet(writer, 'Por Aula', len(classroom_summary))
 
-        print(f"✅ Horario exportado a: {output_path}")
+            print(f"✅ Horario exportado a: {output_path}")
+        except Exception as e:
+            print(f"❌ Error al exportar Excel: {e}")
+            raise
 
     def to_csv(self, assignments: Dict[str, Tuple[str, int, int]], 
                output_path: str) -> None:
@@ -117,7 +130,7 @@ class ScheduleExporter:
         for group_id, (classroom, day_i, block_i) in assignments.items():
             day_name, _ = self.time_model.to_external(day_i, block_i)
             course_code = group_id.rsplit('-G', 1)[0]
-            group_num = group_id.rsplit('-G', 1)[1]
+            group_num = self._extract_group_num(group_id)
             course_name = course_name_map.get(group_id)
             if course_name:
                 base_text = f"{course_code} {course_name} (Grupo {group_num})"
@@ -379,7 +392,7 @@ class ScheduleExporter:
 
             rows.append({
                 'Código Curso': course_code,
-                'Grupo': group_id,
+                'Grupo': self._normalize_group_id(group_id),
                 'Aula': classroom,
                 'Día': day_name,
                 'Hora de Inicio': f"{hour}:00",
@@ -418,7 +431,7 @@ class ScheduleExporter:
                 end_hour = hour
             
             classroom_groups[classroom].append({
-                'Grupo': group_id,
+                'Grupo': self._normalize_group_id(group_id),
                 'Día': day_name,
                 'Hora de Inicio': f"{hour}:00",
                 'Hora Final': f"{end_hour}:00",

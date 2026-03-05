@@ -1,31 +1,556 @@
 {
   "courses": [
     {
-      "code": "BIJ400",
-      "name": "Biología General",
-      "number_of_groups": 2,
+      "code": "QUX104L",
+      "name": "Biorgánica Laboratorio",
+      "number_of_groups": 0,
       "duration": 2,
       "suggested_classroom": null
     },
     {
+      "code": "MAT001",
+      "name": "Matemática General",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "OPT",
+      "name": "Optativo II Inter – énfasis",
+      "number_of_groups": 0,
+      "duration": 0,
+      "suggested_classroom": null
+    },
+    {
+      "code": "LIX411",
+      "name": "Inglés Integrado II para otras carreras",
+      "number_of_groups": 0,
+      "duration": 0,
+      "suggested_classroom": null
+    },
+    {
+      "code": "QUY427",
+      "name": "Elementos de Bioquímica teoría",
+      "number_of_groups": 0,
+      "duration": 4,
+      "suggested_classroom": null
+    },
+    {
+      "code": "QUY427L",
+      "name": "Elementos de Bioquímica laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "MAT002",
+      "name": "Cálculo I",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ402",
+      "name": "Comunicación científica",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ401",
+      "name": "Zoología General I teoría",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "GEN",
+      "name": "Estudios Generales IV",
+      "number_of_groups": 0,
+      "duration": 0,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ400",
+      "name": "Biología General Teoría",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
       "code": "BIJ400L",
-      "name": "Laboratorio de Biología",
-      "number_of_groups": 2,
+      "name": "Biología General Laboratorio",
+      "number_of_groups": 0,
+      "duration": 2,
+      "suggested_classroom": null
+    },
+    {
+      "code": "QUX103",
+      "name": "Fundamentos de Química Teoría",
+      "number_of_groups": 0,
+      "duration": 6,
+      "suggested_classroom": null
+    },
+    {
+      "code": "QUX103L",
+      "name": "Fundamentos de Química Laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "LIX410",
+      "name": "Inglés Integrado I",
+      "number_of_groups": 0,
+      "duration": 0,
+      "suggested_classroom": null
+    },
+    {
+      "code": "QUX104",
+      "name": "Biorgánica",
+      "number_of_groups": 0,
+      "duration": 4,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ401L",
+      "name": "Zoología General I laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ405",
+      "name": "Bioestadística I teoría",
+      "number_of_groups": 0,
       "duration": 3,
       "suggested_classroom": null
     },
     {
       "code": "BIJ405P",
-      "name": "Práctica de Biología",
-      "number_of_groups": 1,
+      "name": "Bioestadística I práctica",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ403",
+      "name": "Zoología  General II teoría",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ403L",
+      "name": "Zoología  General II laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "FIY422",
+      "name": "Física para Biólogos",
+      "number_of_groups": 0,
+      "duration": 5,
+      "suggested_classroom": null
+    },
+    {
+      "code": "FIY422L",
+      "name": "Física para Biólogos Laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ404",
+      "name": "Botánica General teoría",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ404L",
+      "name": "Botánica General laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ406",
+      "name": "Biología de los Microorganismos teoría",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ406L",
+      "name": "Biología de los Microorganismos laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ407",
+      "name": "Bioestadística II teoría",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ407L",
+      "name": "Bioestadística II práctica",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ408",
+      "name": "Ecología General teoría",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ408L",
+      "name": "Ecología General laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ409",
+      "name": "Fisiología Vegetal teoría",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ409L",
+      "name": "Fisiología Vegetal laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ410",
+      "name": "Genética teoría",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ410L",
+      "name": "Genética laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ411",
+      "name": "Legislación Ambiental",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ412",
+      "name": "Fisiología Animal",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ412L",
+      "name": "Fisiología Animal laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ413",
+      "name": "Evolución",
+      "number_of_groups": 0,
+      "duration": 0,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ414",
+      "name": "Biología Celular",
+      "number_of_groups": 0,
+      "duration": 0,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ444L",
+      "name": "Ecología Marina práctica",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ445",
+      "name": "Biotecnología de Cultivos Marinos teoría",
+      "number_of_groups": 0,
+      "duration": 1,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ445L",
+      "name": "Biotecnología de Cultivos Marinos laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ416",
+      "name": "Práctica Profesional Supervisada",
+      "number_of_groups": 0,
+      "duration": 0,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIK500",
+      "name": "Principios de biotecnología acuática",
+      "number_of_groups": 0,
       "duration": 2,
       "suggested_classroom": null
     },
     {
-      "code": "MAT101",
-      "name": "Matemáticas I",
-      "number_of_groups": 3,
+      "code": "BIK501",
+      "name": "",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIK502",
+      "name": "Ecología cuantitativa",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIK503",
+      "name": "Diseño de proyectos",
+      "number_of_groups": 0,
       "duration": 2,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIK504",
+      "name": "Acuicultura: biotecnología y desarrollo sostenible",
+      "number_of_groups": 0,
+      "duration": 4,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIK505",
+      "name": "",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIK506",
+      "name": "Manejo y gestión de recursos acuáticos",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIK507",
+      "name": "Evaluación de impacto ambiental",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIK508",
+      "name": "Trabajo Final de Graduación",
+      "number_of_groups": 0,
+      "duration": 0,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ430",
+      "name": "Ecología de Ecosistemas",
+      "number_of_groups": 0,
+      "duration": 1,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ430L",
+      "name": "Ecología de Ecosistemas",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ431",
+      "name": "Sistemática de plantas",
+      "number_of_groups": 0,
+      "duration": 1,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ431L",
+      "name": "Sistemática de plantas laboratorio",
+      "number_of_groups": 0,
+      "duration": 2,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ432",
+      "name": "",
+      "number_of_groups": 0,
+      "duration": 1,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ432L",
+      "name": "",
+      "number_of_groups": 0,
+      "duration": 2,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ433",
+      "name": "Ecología Molecular teoría",
+      "number_of_groups": 0,
+      "duration": 0,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ433L",
+      "name": "Ecología Molecular laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ415",
+      "name": "Gestión de empresas",
+      "number_of_groups": 0,
+      "duration": 1,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ434",
+      "name": "Análisis espacial de datos biológicos teoría",
+      "number_of_groups": 0,
+      "duration": 1,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ434L",
+      "name": "Análisis espacial de datos biológicos laboratorio",
+      "number_of_groups": 0,
+      "duration": 2,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ435",
+      "name": "Ecología Acuática teoría",
+      "number_of_groups": 0,
+      "duration": 1,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ435L",
+      "name": "Ecología Acuática laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ436",
+      "name": "Ecología de Poblaciones y Comunidades teoría",
+      "number_of_groups": 0,
+      "duration": 2,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ436L",
+      "name": "Ecología de Poblaciones y Comunidades laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ450",
+      "name": "Biotecnología Ambiental teoría",
+      "number_of_groups": 0,
+      "duration": 1,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ450L",
+      "name": "Biotecnología Ambiental laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ451",
+      "name": "Técnicas de Biología Molecular teoría",
+      "number_of_groups": 0,
+      "duration": 0,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ451L",
+      "name": "Técnicas de Biología Molecular laboratorio",
+      "number_of_groups": 0,
+      "duration": 4,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ452",
+      "name": "Inmunología y Técnicas Serológicas teoría",
+      "number_of_groups": 0,
+      "duration": 0,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ452L",
+      "name": "Inmunología y Técnicas Serológicas laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ453",
+      "name": "Técnicas de Cultivo de Tejidos Animales teoría",
+      "number_of_groups": 0,
+      "duration": 0,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ453L",
+      "name": "Técnicas de Cultivo de Tejidos Animales laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ454",
+      "name": "Técnicas de Cultivo de Tejidos Vegetales teoría",
+      "number_of_groups": 0,
+      "duration": 0,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ454L",
+      "name": "Técnicas de Cultivo de Tejidos Vegetales laboratorio",
+      "number_of_groups": 0,
+      "duration": 3,
+      "suggested_classroom": null
+    },
+    {
+      "code": "BIJ456L",
+      "name": "",
+      "number_of_groups": 0,
+      "duration": 3,
       "suggested_classroom": null
     }
   ]

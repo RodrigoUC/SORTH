@@ -72,27 +72,43 @@ class Scheduler:
         self._rng.shuffle(domain_candidates)
 
         # LCV + classroom balance by actual load (blocks):
-        # 1) specific group preferences (day and hour)
-        # 2) prefer weekdays Monday to Friday
-        # 3) prefer schedules until 16:00
-        # 4) lower total load in blocks
-        # 5) fewer number of groups
-        # 6) higher feasibility (light LCV)
-        ordered_domain = sorted(
-            domain_candidates,
-            key=lambda assignment: (
-                self._preference_score(state, group, assignment[1], assignment[2]),
-                self._day_preference_score(state, assignment[1]),
-                self._time_preference_score(state, assignment[2]),
-                self._classroom_load_blocks(state, assignment[0].name),
-                self._classroom_usage(state, assignment[0].name),
-                -self._estimate_impact(state, group, assignment, unassigned),
-            )
-        )
+        # 1) for subgroups: MUST use same classroom as parent group if possible
+        # 2) specific group preferences (day and hour)
+        # 3) prefer weekdays Monday to Friday
+        # 4) prefer schedules until 16:00
+        # 5) lower total load in blocks
+        # 6) fewer number of groups
+        # 7) higher feasibility (light LCV)
+        
+        # For subgroups, separate candidates by whether they use the parent classroom
+        if group.parent_group_id:
+            parent_classroom = self._get_parent_classroom(group.parent_group_id)
+            if parent_classroom:
+                # Prioritize assignments in the parent classroom
+                parent_classroom_candidates = [
+                    a for a in domain_candidates 
+                    if a[0].name == parent_classroom
+                ]
+                other_candidates = [
+                    a for a in domain_candidates 
+                    if a[0].name != parent_classroom
+                ]
+                # Try parent classroom assignments first
+                ordered_domain = self._sort_assignments(state, group, parent_classroom_candidates) + \
+                                self._sort_assignments(state, group, other_candidates)
+            else:
+                ordered_domain = self._sort_assignments(state, group, domain_candidates)
+        else:
+            ordered_domain = self._sort_assignments(state, group, domain_candidates)
 
         for classroom, day, block in ordered_domain:
 
             if state.assign(group, classroom.name, day, block):
+                
+                # Validate subgroup constraints if applicable
+                if group.parent_group_id and not self._is_valid_subgroup_assignment(state, group, day, block):
+                    state.unassign(group)
+                    continue
 
                 removed = self._forward_check(state, group, unassigned)
 
@@ -104,6 +120,28 @@ class Scheduler:
                 state.unassign(group)
 
         return False
+    
+    def _get_parent_classroom(self, parent_group_id: str) -> str | None:
+        """Get the classroom of the first assigned subgroup of a parent group."""
+        for group in self._all_groups:
+            if group.parent_group_id == parent_group_id and group.is_assigned():
+                classroom, _, _ = group.assignment
+                return classroom
+        return None
+    
+    def _sort_assignments(self, state: ScheduleState, group: Group, candidates: list) -> list:
+        """Sort assignment candidates according to preference criteria."""
+        return sorted(
+            candidates,
+            key=lambda assignment: (
+                self._preference_score(state, group, assignment[1], assignment[2]),
+                self._day_preference_score(state, assignment[1]),
+                self._time_preference_score(state, assignment[2]),
+                self._classroom_load_blocks(state, assignment[0].name),
+                self._classroom_usage(state, assignment[0].name),
+                -self._estimate_impact(state, group, assignment, []),
+            )
+        )
 
     def _preference_score(self, state: ScheduleState, group: Group, day: int, start_block: int) -> int:
         """
@@ -255,6 +293,12 @@ class Scheduler:
                     day, block, other.duration
                 ):
                     to_remove.append(assignment)
+                
+                # Check subgroup constraints if this group has a parent
+                elif other.parent_group_id:
+                    # Check if assignment violates subgroup constraints
+                    if not self._is_valid_subgroup_assignment(state, other, day, block):
+                        to_remove.append(assignment)
 
             if to_remove:
                 removed[other.group_id] = to_remove
@@ -266,6 +310,42 @@ class Scheduler:
                     return None
 
         return removed
+    
+    def _is_valid_subgroup_assignment(self, state: ScheduleState, subgroup: Group, day: int, block: int) -> bool:
+        """
+        Validate that a subgroup assignment follows constraints:
+        - Must be in a different day than other subgroups of the same parent group
+        - Must be at the same hour as other subgroups of the same parent group
+        """
+        parent_id = subgroup.parent_group_id
+        if not parent_id:
+            return True
+        
+        # Find all subgroups with the same parent
+        hour = state.time_model.index_to_hour.get(block)
+        if hour is None:
+            return False
+        
+        for other_group in self._all_groups:
+            if other_group.parent_group_id != parent_id or other_group == subgroup:
+                continue
+            
+            if not other_group.is_assigned():
+                continue
+            
+            other_classroom, other_day, other_block = other_group.assignment
+            other_hour = state.time_model.index_to_hour.get(other_block)
+            
+            # Check: must be different day
+            if other_day == day:
+                return False
+            
+            # Check: must be same hour
+            if other_hour != hour:
+                return False
+        
+        return True
+
 
     def _restore_domains(self, removed):
 
