@@ -9,16 +9,18 @@ from ..infrastructure.course_config_reader import CourseConfigReader
 
 class SchedulingService:
 
-    def __init__(self, excel_path: str, course_config_path: str):
+    def __init__(self, excel_path: str, course_config_path: str, seed: int | None = 42):
         """
         Initialize the scheduling service.
         
         Args:
             excel_path: Path to Excel file containing classrooms and availability
             course_config_path: Path to JSON file containing course configuration
+            seed: Random seed for scheduler (None for random, int for reproducible)
         """
         self.excel_path = excel_path
         self.course_config_path = course_config_path
+        self.seed = seed
 
     def run(self):
         # 1. Load infrastructure data
@@ -49,9 +51,12 @@ class SchedulingService:
         for course in courses:
             groups.extend(course.generate_groups())
 
-        # 3. Run scheduler
-        scheduler = Scheduler()
+        # 3. Run scheduler con seed
+        scheduler = Scheduler(seed=self.seed)
         success = scheduler.schedule(schedule_state, groups)
 
-        # 4. Return result
-        return schedule_state.assignments if success else None
+        # 4. Return result (assignments and groups for duration info)
+        if success:
+            return schedule_state.assignments, groups
+        else:
+            return None, None

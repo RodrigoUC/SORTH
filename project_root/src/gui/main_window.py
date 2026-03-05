@@ -2,7 +2,7 @@
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QFileDialog, QMessageBox,
-                             QTabWidget, QStatusBar)
+                             QTabWidget, QStatusBar, QCheckBox, QSpinBox)
 from PyQt6.QtCore import Qt
 from pathlib import Path
 
@@ -24,6 +24,7 @@ class MainWindow(QMainWindow):
         self.excel_path = None
         self.courses = []
         self.current_schedule = None
+        self.current_groups = None
         self.time_model = None
         
         self.init_ui()
@@ -121,6 +122,28 @@ class MainWindow(QMainWindow):
         """Create the actions button section."""
         layout = QHBoxLayout()
 
+        # Seed explanation
+        seed_label = QLabel("🎲 Semilla:")
+        seed_label.setToolTip(
+            "La semilla (seed) controla la aleatoriedad del algoritmo.\n"
+            "• Con una semilla fija: genera el MISMO horario cada vez (reproducible)\n"
+            "• Con semilla aleatoria: genera horarios DIFERENTES cada vez\n"
+            "Útil para probar múltiples alternativas de horarios."
+        )
+
+        # Seed controls
+        self.chk_random_seed = QCheckBox("Aleatorio")
+        self.chk_random_seed.setChecked(False)
+        self.chk_random_seed.setToolTip("Activar para usar semilla aleatoria en cada generación")
+
+        self.seed_input = QSpinBox()
+        self.seed_input.setRange(0, 999999)
+        self.seed_input.setValue(42)
+        self.seed_input.setPrefix("Valor: ")
+        self.seed_input.setToolTip("Número fijo que controla la generación del horario (rango: 0-999999)")
+
+        self.chk_random_seed.toggled.connect(self.seed_input.setDisabled)
+
         # Generate schedule button
         self.btn_generate = QPushButton("🚀 Generar Horario")
         self.btn_generate.clicked.connect(self.generate_schedule)
@@ -149,6 +172,9 @@ class MainWindow(QMainWindow):
         self.btn_export.setEnabled(False)
 
         layout.addStretch()
+        layout.addWidget(seed_label)
+        layout.addWidget(self.chk_random_seed)
+        layout.addWidget(self.seed_input)
         layout.addWidget(self.btn_generate)
         layout.addWidget(self.btn_export)
 
@@ -210,16 +236,25 @@ class MainWindow(QMainWindow):
             json.dump({"courses": courses}, temp_config)
             temp_config.close()
 
+            seed = None if self.chk_random_seed.isChecked() else self.seed_input.value()
+
+            # If SchedulingService can use seed:
+            try:
+                service = SchedulingService(self.excel_path, temp_config.name, seed=seed)
+            except TypeError:
+                # Temporally fallback if SchedulingService doesn't support seed parameter
+                service = SchedulingService(self.excel_path, temp_config.name)
+
             # Run scheduling service
-            service = SchedulingService(self.excel_path, temp_config.name)
-            assignments = service.run()
+            assignments, groups = service.run()
 
             # Clean up temp file
             Path(temp_config.name).unlink()
 
             if assignments:
                 self.current_schedule = assignments
-                self.schedule_viewer.display_schedule(assignments, self.time_model)
+                self.current_groups = groups
+                self.schedule_viewer.display_schedule(assignments, self.time_model, groups)
                 self.tabs.setCurrentIndex(1)  # Switch to schedule viewer tab
                 self.btn_export.setEnabled(True)
                 self.status_bar.showMessage(f"✅ Horario generado exitosamente ({len(assignments)} asignaciones)")
@@ -272,7 +307,7 @@ class MainWindow(QMainWindow):
                 if file_path.endswith('.csv'):
                     exporter.to_csv(self.current_schedule, file_path)
                 else:
-                    exporter.to_excel(self.current_schedule, file_path, include_grid=True)
+                    exporter.to_excel(self.current_schedule, file_path, groups=self.current_groups, include_grid=True)
                 
                 self.status_bar.showMessage(f"✅ Horario exportado a {Path(file_path).name}")
                 QMessageBox.information(

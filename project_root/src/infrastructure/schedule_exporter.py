@@ -22,6 +22,7 @@ class ScheduleExporter:
 
     def to_excel(self, assignments: Dict[str, Tuple[str, int, int]], 
                  output_path: str,
+                 groups=None,
                  include_grid: bool = True) -> None:
         """
         Export schedule to Excel file with multiple sheets.
@@ -29,24 +30,31 @@ class ScheduleExporter:
         Args:
             assignments: Dictionary mapping group_id to (classroom, day_idx, block_idx)
             output_path: Path to save the Excel file
+            groups: List of Group objects containing duration information
             include_grid: If True, creates a visual grid/timetable view
         """
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
+        # Create duration map from groups
+        duration_map = {}
+        if groups:
+            for group in groups:
+                duration_map[group.group_id] = group.duration
+
         # Create detailed list
-        detailed_df = self._create_detailed_dataframe(assignments)
+        detailed_df = self._create_detailed_dataframe(assignments, duration_map)
 
         with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
             # Sheet 1: Grid view (visual timetable) - if requested
             if include_grid:
-                self._write_grid_sheet(writer, assignments, 'Horario Visual')
+                self._write_grid_sheet(writer, assignments, duration_map, 'Horario Visual')
 
             # Sheet 2: Detailed list
             detailed_df.to_excel(writer, sheet_name='Asignaciones', index=False)
             self._format_detailed_sheet(writer, 'Asignaciones', len(detailed_df))
 
             # Sheet 3: Summary by classroom
-            classroom_summary = self._create_classroom_summary(assignments)
+            classroom_summary = self._create_classroom_summary(assignments, duration_map)
             classroom_summary.to_excel(writer, sheet_name='Por Aula', index=False)
             self._format_classroom_sheet(writer, 'Por Aula', len(classroom_summary))
 
@@ -69,8 +77,13 @@ class ScheduleExporter:
         print(f"✅ Horario exportado a: {output_path}")
 
     def _write_grid_sheet(self, writer, assignments: Dict[str, Tuple[str, int, int]], 
-                         sheet_name: str):
+                         duration_map: Dict = None, sheet_name: str = None):
         """Write a visual grid/timetable sheet to Excel."""
+        if sheet_name is None:
+            sheet_name = 'Horario Visual'
+        if duration_map is None:
+            duration_map = {}
+            
         days = self.time_model.days
         hours = sorted(self.time_model.hours)
 
@@ -82,21 +95,30 @@ class ScheduleExporter:
                 row[day] = ""
             grid_data.append(row)
 
-        # Fill grid with assignments
+        # Fill grid with assignments - mark ALL hours covered by each course
         for group_id, (classroom, day_i, block_i) in assignments.items():
-            day_name, hour = self.time_model.to_external(day_i, block_i)
+            day_name, start_hour = self.time_model.to_external(day_i, block_i)
             course_code = group_id.rsplit('-G', 1)[0]
             group_num = group_id.rsplit('-G', 1)[1]
             cell_value = f"{course_code}-G{group_num}\n({classroom})"
             
-            # Find the row for this hour
-            for row in grid_data:
-                if row['Hora'] == f"{hour}:00":
-                    if row[day_name]:
-                        row[day_name] += f"\n---\n{cell_value}"
-                    else:
-                        row[day_name] = cell_value
-                    break
+            # Get duration for this group
+            duration = duration_map.get(group_id, 1)
+            
+            # Mark ALL hours covered by this course
+            for offset in range(duration):
+                block_idx = block_i + offset
+                if block_idx <= self.time_model.blocks_per_day:
+                    _, hour = self.time_model.to_external(day_i, block_idx)
+                    
+                    # Find the row for this hour
+                    for row in grid_data:
+                        if row['Hora'] == f"{hour}:00":
+                            if row[day_name]:
+                                row[day_name] += f"\n---\n{cell_value}"
+                            else:
+                                row[day_name] = cell_value
+                            break
 
         # Create DataFrame and write
         grid_df = pd.DataFrame(grid_data)
@@ -223,6 +245,7 @@ class ScheduleExporter:
         worksheet.column_dimensions['D'].width = 12
         worksheet.column_dimensions['E'].width = 15
         worksheet.column_dimensions['F'].width = 10
+        worksheet.column_dimensions['G'].width = 12
 
     def _format_classroom_sheet(self, writer, sheet_name: str, num_rows: int):
         """Format the classroom summary sheet."""
@@ -243,9 +266,16 @@ class ScheduleExporter:
         worksheet.column_dimensions['B'].width = 20
         worksheet.column_dimensions['C'].width = 12
         worksheet.column_dimensions['D'].width = 12
+        worksheet.column_dimensions['E'].width = 12
+        worksheet.column_dimensions['F'].width = 12
+        worksheet.column_dimensions['G'].width = 12
 
-    def _create_detailed_dataframe(self, assignments: Dict[str, Tuple[str, int, int]]) -> pd.DataFrame:
+    def _create_detailed_dataframe(self, assignments: Dict[str, Tuple[str, int, int]], 
+                                  duration_map: Dict = None) -> pd.DataFrame:
         """Create a detailed list of all assignments."""
+        if duration_map is None:
+            duration_map = {}
+            
         rows = []
 
         for group_id, (classroom, day_i, block_i) in sorted(assignments.items()):
@@ -253,14 +283,25 @@ class ScheduleExporter:
 
             # Extract course code from group_id (format: "CODE-G1")
             course_code = group_id.rsplit('-G', 1)[0]
+            
+            # Get duration for this group
+            duration = duration_map.get(group_id, 1)
+            
+            # Calculate end hour
+            end_block_i = block_i + duration - 1
+            if end_block_i <= self.time_model.blocks_per_day:
+                _, end_hour = self.time_model.to_external(day_i, end_block_i)
+            else:
+                end_hour = hour
 
             rows.append({
                 'Código Curso': course_code,
                 'Grupo': group_id,
                 'Aula': classroom,
                 'Día': day_name,
-                'Hora Inicio': f"{hour}:00",
-                'Bloque': block_i + 1
+                'Hora': f"{hour}:00",
+                'Hora Final': f"{end_hour}:00",
+                'Duración': duration
             })
 
         return pd.DataFrame(rows)
@@ -269,8 +310,12 @@ class ScheduleExporter:
         """Create a visual grid/timetable view (deprecated - use _write_grid_sheet instead)."""
         return pd.DataFrame()
 
-    def _create_classroom_summary(self, assignments: Dict[str, Tuple[str, int, int]]) -> pd.DataFrame:
+    def _create_classroom_summary(self, assignments: Dict[str, Tuple[str, int, int]], 
+                                 duration_map: Dict = None) -> pd.DataFrame:
         """Create summary grouped by classroom."""
+        if duration_map is None:
+            duration_map = {}
+            
         classroom_groups = {}
 
         for group_id, (classroom, day_i, block_i) in assignments.items():
@@ -278,10 +323,23 @@ class ScheduleExporter:
                 classroom_groups[classroom] = []
 
             day_name, hour = self.time_model.to_external(day_i, block_i)
+            
+            # Get duration for this group
+            duration = duration_map.get(group_id, 1)
+            
+            # Calculate end hour
+            end_block_i = block_i + duration - 1
+            if end_block_i <= self.time_model.blocks_per_day:
+                _, end_hour = self.time_model.to_external(day_i, end_block_i)
+            else:
+                end_hour = hour
+            
             classroom_groups[classroom].append({
                 'Grupo': group_id,
                 'Día': day_name,
-                'Hora': f"{hour}:00"
+                'Hora': f"{hour}:00",
+                'Hora Final': f"{end_hour}:00",
+                'Duración': duration
             })
 
         rows = []
@@ -292,7 +350,9 @@ class ScheduleExporter:
                     'Aula': classroom,
                     'Grupo': assignment['Grupo'],
                     'Día': assignment['Día'],
-                    'Hora': assignment['Hora']
+                    'Hora': assignment['Hora'],
+                    'Hora Final': assignment['Hora Final'],
+                    'Duración': assignment['Duración']
                 })
 
         return pd.DataFrame(rows)

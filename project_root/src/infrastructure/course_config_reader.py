@@ -29,7 +29,9 @@ class CourseConfigReader:
               "number_of_groups": 2,
               "duration": 2,
               "room_type": "REGULAR" or "LAB",  // Optional, auto-detected from code
-              "suggested_classroom": "601" or null
+              "suggested_classroom": "601" or null,
+              "preferred_day": "Lunes" or null,  // Optional, usually set from GUI
+              "preferred_hour": 10 or null  // Optional, usually set from GUI
             }
           ]
         }
@@ -67,7 +69,9 @@ class CourseConfigReader:
                 number_of_groups=course_data["number_of_groups"],
                 duration=course_data["duration"],
                 required_room_type=room_type,
-                suggested_classroom=course_data.get("suggested_classroom")
+                suggested_classroom=course_data.get("suggested_classroom"),
+                preferred_day=course_data.get("preferred_day"),
+                preferred_hour=course_data.get("preferred_hour")
             )
             
             courses.append(course)

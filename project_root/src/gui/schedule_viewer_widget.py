@@ -16,6 +16,7 @@ class ScheduleViewerWidget(QWidget):
     def __init__(self):
         super().__init__()
         self._classroom_colors = {}
+        self.duration_map = {}
         self.init_ui()
 
     def init_ui(self):
@@ -79,11 +80,17 @@ class ScheduleViewerWidget(QWidget):
         pass
 
     def display_schedule(self, assignments: Dict[str, Tuple[str, int, int]], 
-                        time_model: TimeModel):
+                        time_model: TimeModel, groups=None):
         """Display the generated schedule."""
         if not assignments:
             self._show_empty_state()
             return
+
+        # Create duration map from groups
+        self.duration_map = {}
+        if groups:
+            for group in groups:
+                self.duration_map[group.group_id] = group.duration
 
         # Display list view
         self._display_list_view(assignments, time_model)
@@ -104,7 +111,7 @@ class ScheduleViewerWidget(QWidget):
         self.list_table.setRowCount(len(assignments))
         self.list_table.setColumnCount(6)
         self.list_table.setHorizontalHeaderLabels([
-            "Código Curso", "Grupo", "Aula", "Día", "Hora Inicio", "Bloque"
+            "Código Curso", "Grupo", "Aula", "Día", "Hora Inicio", "Hora Final"
         ])
         
         row = 0
@@ -112,12 +119,21 @@ class ScheduleViewerWidget(QWidget):
             day_name, hour = time_model.to_external(day_i, block_i)
             course_code = group_id.rsplit('-G', 1)[0]
             
+            # Calculate end hour based on duration
+            duration = self.duration_map.get(group_id, 1) if hasattr(self, 'duration_map') else 1
+            end_block_i = block_i + duration - 1
+            if end_block_i <= time_model.blocks_per_day:
+                _, end_hour = time_model.to_external(day_i, end_block_i)
+                end_hour_text = f"{end_hour + 1}:00"  # End of the last block
+            else:
+                end_hour_text = "N/A"
+            
             self.list_table.setItem(row, 0, QTableWidgetItem(course_code))
             self.list_table.setItem(row, 1, QTableWidgetItem(group_id))
             self.list_table.setItem(row, 2, QTableWidgetItem(classroom))
             self.list_table.setItem(row, 3, QTableWidgetItem(day_name))
             self.list_table.setItem(row, 4, QTableWidgetItem(f"{hour}:00"))
-            self.list_table.setItem(row, 5, QTableWidgetItem(str(block_i + 1)))
+            self.list_table.setItem(row, 5, QTableWidgetItem(end_hour_text))
             
             row += 1
         
@@ -142,13 +158,22 @@ class ScheduleViewerWidget(QWidget):
         for hour in hours:
             grid[hour] = {day: [] for day in days}
         
-        # Fill grid with assignments
+        # Fill grid with assignments - mark ALL hours covered by each course
         for group_id, (classroom, day_i, block_i) in assignments.items():
-            day_name, hour = time_model.to_external(day_i, block_i)
+            day_name, start_hour = time_model.to_external(day_i, block_i)
             course_code = group_id.rsplit('-G', 1)[0]
             group_num = group_id.rsplit('-G', 1)[1]
             cell_text = f"{course_code}-G{group_num}\n({classroom})"
-            grid[hour][day_name].append((cell_text, classroom, course_code))
+            
+            # Get duration for this group (default to 1 if not available)
+            duration = self.duration_map.get(group_id, 1) if hasattr(self, 'duration_map') else 1
+            
+            # Mark all hours covered by this course
+            for offset in range(duration):
+                block_idx = block_i + offset
+                if block_idx <= time_model.blocks_per_day:
+                    _, hour = time_model.to_external(day_i, block_idx)
+                    grid[hour][day_name].append((cell_text, classroom, course_code))
         
         # Color palette - different colors for each classroom
         self._setup_classroom_colors(assignments)

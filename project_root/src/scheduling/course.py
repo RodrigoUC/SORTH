@@ -11,13 +11,17 @@ class Course:
         number_of_groups: int,
         duration: int,
         required_room_type: str,
-        suggested_classroom: str | None = None
+        suggested_classroom: str | None = None,
+        preferred_day: str | None = None,
+        preferred_hour: int | None = None
     ):
         self.code = code
         self.number_of_groups = number_of_groups
         self.duration = duration
         self.required_room_type = required_room_type
         self.suggested_classroom = suggested_classroom
+        self.preferred_day = preferred_day
+        self.preferred_hour = preferred_hour
 
     def generate_groups(self) -> list[Group]:
         groups = []
@@ -29,7 +33,9 @@ class Course:
                     duration=self.duration,
                     required_room_type=self.required_room_type,
                     suggested_classroom=self.suggested_classroom,
-                    course_code=self.code
+                    course_code=self.code,
+                    preferred_day=self.preferred_day,
+                    preferred_hour=self.preferred_hour
                 )
             )
 
