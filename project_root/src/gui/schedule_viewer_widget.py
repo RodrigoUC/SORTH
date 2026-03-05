@@ -2,7 +2,7 @@
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem,
                              QLabel, QHeaderView, QTabWidget, QPushButton,
-                             QMessageBox)
+                             QMessageBox, QComboBox, QHBoxLayout)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont
 from typing import Dict, Tuple
@@ -17,6 +17,9 @@ class ScheduleViewerWidget(QWidget):
         super().__init__()
         self._classroom_colors = {}
         self.duration_map = {}
+        self.course_name_map = {}
+        self._grid_classroom_assignments = {}
+        self._grid_time_model = None
         self.init_ui()
 
     def init_ui(self):
@@ -57,9 +60,25 @@ class ScheduleViewerWidget(QWidget):
         self.list_table = QTableWidget()
         self.tabs.addTab(self.list_table, "📋 Lista Detallada")
         
-        # Grid view (full width without legend)
+        # Grid view with classroom selector
+        self.grid_widget = QWidget()
+        self.grid_widget_layout = QVBoxLayout(self.grid_widget)
+
+        selector_layout = QHBoxLayout()
+        selector_label = QLabel("Aula:")
+        selector_label.setStyleSheet("font-weight: bold;")
+        self.classroom_selector = QComboBox()
+        self.classroom_selector.setMinimumWidth(220)
+        self.classroom_selector.currentTextChanged.connect(self._on_classroom_selected)
+        selector_layout.addWidget(selector_label)
+        selector_layout.addWidget(self.classroom_selector)
+        selector_layout.addStretch()
+
         self.grid_table = QTableWidget()
-        self.tabs.addTab(self.grid_table, "📅 Vista de Cuadrícula")
+
+        self.grid_widget_layout.addLayout(selector_layout)
+        self.grid_widget_layout.addWidget(self.grid_table)
+        self.tabs.addTab(self.grid_widget, "📅 Vista de Cuadrícula")
         
         # Classroom view
         self.classroom_table = QTableWidget()
@@ -80,17 +99,31 @@ class ScheduleViewerWidget(QWidget):
         pass
 
     def display_schedule(self, assignments: Dict[str, Tuple[str, int, int]], 
-                        time_model: TimeModel, groups=None):
+                        time_model: TimeModel, groups=None, course_name_by_code=None):
         """Display the generated schedule."""
         if not assignments:
             self._show_empty_state()
             return
 
+        if course_name_by_code is None:
+            course_name_by_code = {}
+
         # Create duration map from groups
         self.duration_map = {}
+        self.course_name_map = {}
         if groups:
             for group in groups:
                 self.duration_map[group.group_id] = group.duration
+                name_from_group = getattr(group, 'course_name', None)
+                if name_from_group:
+                    self.course_name_map[group.group_id] = name_from_group
+
+        # Fallback by course code map (from GUI courses)
+        for group_id in assignments.keys():
+            if group_id not in self.course_name_map:
+                course_code = group_id.rsplit('-G', 1)[0]
+                if course_code in course_name_by_code and course_name_by_code[course_code]:
+                    self.course_name_map[group_id] = course_name_by_code[course_code]
 
         # Display list view
         self._display_list_view(assignments, time_model)
@@ -141,84 +174,108 @@ class ScheduleViewerWidget(QWidget):
 
     def _display_grid_view(self, assignments: Dict[str, Tuple[str, int, int]], 
                           time_model: TimeModel):
-        """Display the grid/timetable view."""
+        """Display a single grid and switch classroom with selector."""
+        self._grid_time_model = time_model
+
+        # Color palette by classroom
+        self._setup_classroom_colors(assignments)
+
+        # Group assignments by classroom
+        classroom_assignments = {}
+        for group_id, (classroom, day_i, block_i) in assignments.items():
+            if classroom not in classroom_assignments:
+                classroom_assignments[classroom] = []
+            classroom_assignments[classroom].append((group_id, day_i, block_i))
+        self._grid_classroom_assignments = classroom_assignments
+
+        classroom_list = sorted(classroom_assignments.keys())
+
+        current_selection = self.classroom_selector.currentText()
+        self.classroom_selector.blockSignals(True)
+        self.classroom_selector.clear()
+        self.classroom_selector.addItems(classroom_list)
+        self.classroom_selector.blockSignals(False)
+
+        if not classroom_list:
+            self.grid_table.clear()
+            self.grid_table.setRowCount(0)
+            self.grid_table.setColumnCount(0)
+            return
+
+        if current_selection in classroom_list:
+            selected_classroom = current_selection
+        else:
+            selected_classroom = classroom_list[0]
+
+        self.classroom_selector.setCurrentText(selected_classroom)
+        self._render_selected_classroom_grid(selected_classroom)
+
+    def _on_classroom_selected(self, classroom: str):
+        """Render timetable when selected classroom changes."""
+        self._render_selected_classroom_grid(classroom)
+
+    def _render_selected_classroom_grid(self, classroom: str):
+        """Render timetable for a specific classroom."""
+        if not classroom or not self._grid_time_model:
+            return
+
+        time_model = self._grid_time_model
         days = time_model.days
         hours = sorted(time_model.hours)
-        
+
         self.grid_table.clear()
         self.grid_table.setRowCount(len(hours))
         self.grid_table.setColumnCount(len(days) + 1)
-        
-        # Set headers
         headers = ["Hora"] + days
         self.grid_table.setHorizontalHeaderLabels(headers)
-        
-        # Initialize grid
-        grid = {}
-        for hour in hours:
-            grid[hour] = {day: [] for day in days}
-        
-        # Fill grid with assignments - mark ALL hours covered by each course
-        for group_id, (classroom, day_i, block_i) in assignments.items():
-            day_name, start_hour = time_model.to_external(day_i, block_i)
+
+        grid = {hour: {day: [] for day in days} for hour in hours}
+
+        for group_id, day_i, block_i in self._grid_classroom_assignments.get(classroom, []):
+            day_name, _ = time_model.to_external(day_i, block_i)
             course_code = group_id.rsplit('-G', 1)[0]
             group_num = group_id.rsplit('-G', 1)[1]
-            cell_text = f"{course_code}-G{group_num}\n({classroom})"
-            
-            # Get duration for this group (default to 1 if not available)
+            course_name = self.course_name_map.get(group_id)
+            if course_name:
+                cell_text = f"{course_code} {course_name} (Grupo {group_num})"
+            else:
+                cell_text = f"{course_code} (Grupo {group_num})"
+
             duration = self.duration_map.get(group_id, 1) if hasattr(self, 'duration_map') else 1
-            
-            # Mark all hours covered by this course
             for offset in range(duration):
                 block_idx = block_i + offset
                 if block_idx <= time_model.blocks_per_day:
                     _, hour = time_model.to_external(day_i, block_idx)
-                    grid[hour][day_name].append((cell_text, classroom, course_code))
-        
-        # Color palette - different colors for each classroom
-        self._setup_classroom_colors(assignments)
-        
-        # Color definitions
-        color_header = QColor(25, 103, 210)  # Dark blue
-        color_hour = QColor(240, 240, 240)   # Light gray
-        text_color_header = QColor(255, 255, 255)  # White
-        text_color_dark = QColor(0, 0, 0)  # Black
-        
-        # Populate table
+                    grid[hour][day_name].append(cell_text)
+
+        color_header = QColor(25, 103, 210)
+        color_hour = QColor(240, 240, 240)
+        text_color_header = QColor(255, 255, 255)
+        text_color_dark = QColor(0, 0, 0)
+
         for row_idx, hour in enumerate(hours):
-            # Hour column
             hour_item = QTableWidgetItem(f"{hour}:00")
             hour_item.setBackground(color_hour)
             hour_item.setForeground(text_color_dark)
             hour_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
             hour_item.setFont(self._get_font(bold=True))
             self.grid_table.setItem(row_idx, 0, hour_item)
-            
-            # Day columns
+
             for col_idx, day in enumerate(days):
-                assignments_list = grid[hour][day]
-                
-                if assignments_list:
-                    # Display all assignments in this cell
-                    assignment_text = '\n---\n'.join([cell[0] for cell in assignments_list])
-                    item = QTableWidgetItem(assignment_text)
-                    
-                    # Get color from first classroom in the cell
-                    classroom = assignments_list[0][1]
-                    cell_color = self._classroom_colors.get(classroom, QColor(76, 175, 80))
-                    
-                    item.setBackground(cell_color)
+                entries = grid[hour][day]
+                if entries:
+                    item = QTableWidgetItem('\n---\n'.join(entries))
+                    item.setBackground(self._classroom_colors.get(classroom, QColor(76, 175, 80)))
                     item.setForeground(text_color_dark)
                     item.setFont(self._get_font(bold=False, size=9))
                 else:
                     item = QTableWidgetItem("")
-                    item.setBackground(QColor(255, 255, 255))  # White
+                    item.setBackground(QColor(255, 255, 255))
                     item.setForeground(text_color_dark)
-                
+
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                 self.grid_table.setItem(row_idx, col_idx + 1, item)
-        
-        # Set header formatting
+
         header = self.grid_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         for i in range(len(headers)):
@@ -228,11 +285,10 @@ class ScheduleViewerWidget(QWidget):
                 header_item.setForeground(text_color_header)
                 header_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
                 header_item.setFont(self._get_font(bold=True))
-        
-        # Set row heights
+
         self.grid_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         for i in range(len(hours)):
-            self.grid_table.setRowHeight(i, 80)
+            self.grid_table.setRowHeight(i, 70)
 
     def _setup_classroom_colors(self, assignments: Dict[str, Tuple[str, int, int]]):
         """Setup a unique color for each classroom."""

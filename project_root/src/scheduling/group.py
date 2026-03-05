@@ -11,7 +11,8 @@ class Group:
         suggested_classroom: str | None = None,
         course_code: str | None = None,
         preferred_day: str | None = None,
-        preferred_hour: int | None = None
+        preferred_hour: int | None = None,
+        course_name: str | None = None
     ):
         self.group_id = group_id
         self.duration = duration
@@ -19,6 +20,7 @@ class Group:
         self.size = size
         self.suggested_classroom = suggested_classroom
         self.course_code = course_code
+        self.course_name = course_name
         self.preferred_day = preferred_day
         self.preferred_hour = preferred_hour
 

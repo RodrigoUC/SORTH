@@ -69,6 +69,7 @@ class CourseConfigReader:
                 number_of_groups=course_data["number_of_groups"],
                 duration=course_data["duration"],
                 required_room_type=room_type,
+                name=course_data.get("name"),
                 suggested_classroom=course_data.get("suggested_classroom"),
                 preferred_day=course_data.get("preferred_day"),
                 preferred_hour=course_data.get("preferred_hour")

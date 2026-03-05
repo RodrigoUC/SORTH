@@ -13,9 +13,11 @@ class Course:
         required_room_type: str,
         suggested_classroom: str | None = None,
         preferred_day: str | None = None,
-        preferred_hour: int | None = None
+        preferred_hour: int | None = None,
+        name: str | None = None
     ):
         self.code = code
+        self.name = name
         self.number_of_groups = number_of_groups
         self.duration = duration
         self.required_room_type = required_room_type
@@ -35,7 +37,8 @@ class Course:
                     suggested_classroom=self.suggested_classroom,
                     course_code=self.code,
                     preferred_day=self.preferred_day,
-                    preferred_hour=self.preferred_hour
+                    preferred_hour=self.preferred_hour,
+                    course_name=self.name
                 )
             )
 

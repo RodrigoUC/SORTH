@@ -25,6 +25,7 @@ class MainWindow(QMainWindow):
         self.courses = []
         self.current_schedule = None
         self.current_groups = None
+        self.current_course_name_map = {}
         self.time_model = None
         
         self.init_ui()
@@ -224,6 +225,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Advertencia", "Por favor agregue al menos un curso.")
             return
 
+        course_name_map = {
+            c.get("code"): c.get("name")
+            for c in courses
+            if c.get("code")
+        }
+
         try:
             self.status_bar.showMessage("⏳ Generando horario...")
             
@@ -254,7 +261,8 @@ class MainWindow(QMainWindow):
             if assignments:
                 self.current_schedule = assignments
                 self.current_groups = groups
-                self.schedule_viewer.display_schedule(assignments, self.time_model, groups)
+                self.current_course_name_map = course_name_map
+                self.schedule_viewer.display_schedule(assignments, self.time_model, groups, self.current_course_name_map)
                 self.tabs.setCurrentIndex(1)  # Switch to schedule viewer tab
                 self.btn_export.setEnabled(True)
                 self.status_bar.showMessage(f"✅ Horario generado exitosamente ({len(assignments)} asignaciones)")
@@ -307,7 +315,13 @@ class MainWindow(QMainWindow):
                 if file_path.endswith('.csv'):
                     exporter.to_csv(self.current_schedule, file_path)
                 else:
-                    exporter.to_excel(self.current_schedule, file_path, groups=self.current_groups, include_grid=True)
+                    exporter.to_excel(
+                        self.current_schedule,
+                        file_path,
+                        groups=self.current_groups,
+                        course_name_by_code=self.current_course_name_map,
+                        include_grid=True
+                    )
                 
                 self.status_bar.showMessage(f"✅ Horario exportado a {Path(file_path).name}")
                 QMessageBox.information(

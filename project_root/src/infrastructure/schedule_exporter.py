@@ -23,6 +23,7 @@ class ScheduleExporter:
     def to_excel(self, assignments: Dict[str, Tuple[str, int, int]], 
                  output_path: str,
                  groups=None,
+                 course_name_by_code: Dict[str, str] = None,
                  include_grid: bool = True) -> None:
         """
         Export schedule to Excel file with multiple sheets.
@@ -37,17 +38,30 @@ class ScheduleExporter:
 
         # Create duration map from groups
         duration_map = {}
+        course_name_map = {}
         if groups:
             for group in groups:
                 duration_map[group.group_id] = group.duration
+                name_from_group = getattr(group, 'course_name', None)
+                if name_from_group:
+                    course_name_map[group.group_id] = name_from_group
+
+        # Fallback by course code map (from GUI courses)
+        if course_name_by_code is None:
+            course_name_by_code = {}
+        for group_id in assignments.keys():
+            if group_id not in course_name_map:
+                course_code = group_id.rsplit('-G', 1)[0]
+                if course_code in course_name_by_code and course_name_by_code[course_code]:
+                    course_name_map[group_id] = course_name_by_code[course_code]
 
         # Create detailed list
         detailed_df = self._create_detailed_dataframe(assignments, duration_map)
 
         with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-            # Sheet 1: Grid view (visual timetable) - if requested
+            # Grid sheets by classroom - if requested
             if include_grid:
-                self._write_grid_sheet(writer, assignments, duration_map, 'Horario Visual')
+                self._write_classroom_grid_sheets(writer, assignments, duration_map, course_name_map)
 
             # Sheet 2: Detailed list
             detailed_df.to_excel(writer, sheet_name='Asignaciones', index=False)
@@ -77,12 +91,16 @@ class ScheduleExporter:
         print(f"✅ Horario exportado a: {output_path}")
 
     def _write_grid_sheet(self, writer, assignments: Dict[str, Tuple[str, int, int]], 
-                         duration_map: Dict = None, sheet_name: str = None):
+                         duration_map: Dict = None, sheet_name: str = None,
+                         include_classroom_in_cell: bool = True,
+                         course_name_map: Dict = None):
         """Write a visual grid/timetable sheet to Excel."""
         if sheet_name is None:
             sheet_name = 'Horario Visual'
         if duration_map is None:
             duration_map = {}
+        if course_name_map is None:
+            course_name_map = {}
             
         days = self.time_model.days
         hours = sorted(self.time_model.hours)
@@ -97,10 +115,18 @@ class ScheduleExporter:
 
         # Fill grid with assignments - mark ALL hours covered by each course
         for group_id, (classroom, day_i, block_i) in assignments.items():
-            day_name, start_hour = self.time_model.to_external(day_i, block_i)
+            day_name, _ = self.time_model.to_external(day_i, block_i)
             course_code = group_id.rsplit('-G', 1)[0]
             group_num = group_id.rsplit('-G', 1)[1]
-            cell_value = f"{course_code}-G{group_num}\n({classroom})"
+            course_name = course_name_map.get(group_id)
+            if course_name:
+                base_text = f"{course_code} {course_name} (Grupo {group_num})"
+            else:
+                base_text = f"{course_code} (Grupo {group_num})"
+            if include_classroom_in_cell:
+                cell_value = f"{base_text}\n({classroom})"
+            else:
+                cell_value = base_text
             
             # Get duration for this group
             duration = duration_map.get(group_id, 1)
@@ -171,17 +197,24 @@ class ScheduleExporter:
                 else:
                     # Data cells
                     if cell.value:
-                        # Extract classroom from cell value to get color
-                        cell_text = str(cell.value)
-                        classroom = None
-                        for line in cell_text.split('\n'):
-                            if '(' in line and ')' in line:
-                                classroom = line.strip('()')
-                                break
-                        
-                        if classroom in classroom_colors:
-                            color_hex = classroom_colors[classroom]
-                            cell.fill = PatternFill(start_color=color_hex, end_color=color_hex, fill_type="solid")
+                        if include_classroom_in_cell:
+                            # Extract classroom from cell value to get color
+                            cell_text = str(cell.value)
+                            classroom = None
+                            for line in cell_text.split('\n'):
+                                if '(' in line and ')' in line:
+                                    classroom = line.strip('()')
+                                    break
+
+                            if classroom in classroom_colors:
+                                color_hex = classroom_colors[classroom]
+                                cell.fill = PatternFill(start_color=color_hex, end_color=color_hex, fill_type="solid")
+                        else:
+                            # Single-classroom sheet: paint all occupied cells with same color
+                            first_classroom = next(iter(assignments.values()))[0] if assignments else None
+                            if first_classroom in classroom_colors:
+                                color_hex = classroom_colors[first_classroom]
+                                cell.fill = PatternFill(start_color=color_hex, end_color=color_hex, fill_type="solid")
                         
                         cell.font = assignment_font
                         cell.alignment = assignment_alignment
@@ -199,6 +232,56 @@ class ScheduleExporter:
         worksheet.row_dimensions[1].height = 25
         for row_idx in range(2, len(grid_data) + 2):
             worksheet.row_dimensions[row_idx].height = 60
+
+    def _write_classroom_grid_sheets(self, writer, assignments: Dict[str, Tuple[str, int, int]],
+                                     duration_map: Dict = None,
+                                     course_name_map: Dict = None):
+        """Write one timetable sheet per classroom."""
+        if duration_map is None:
+            duration_map = {}
+        if course_name_map is None:
+            course_name_map = {}
+
+        classroom_assignments = {}
+        for group_id, assignment in assignments.items():
+            classroom = assignment[0]
+            if classroom not in classroom_assignments:
+                classroom_assignments[classroom] = {}
+            classroom_assignments[classroom][group_id] = assignment
+
+        used_sheet_names = set()
+        for classroom in sorted(classroom_assignments.keys()):
+            raw_sheet_name = f"Aula {classroom}"
+            sheet_name = self._unique_sheet_name(raw_sheet_name, used_sheet_names)
+            used_sheet_names.add(sheet_name)
+            self._write_grid_sheet(
+                writer,
+                classroom_assignments[classroom],
+                duration_map,
+                sheet_name,
+                include_classroom_in_cell=False,
+                course_name_map=course_name_map
+            )
+
+    def _unique_sheet_name(self, base_name: str, used_names: set) -> str:
+        """Create a valid and unique Excel sheet name (max 31 chars)."""
+        invalid_chars = ['\\', '/', '*', '?', ':', '[', ']']
+        safe_name = base_name
+        for ch in invalid_chars:
+            safe_name = safe_name.replace(ch, '-')
+
+        safe_name = safe_name[:31]
+        if safe_name not in used_names:
+            return safe_name
+
+        suffix = 2
+        while True:
+            suffix_text = f"_{suffix}"
+            truncated = safe_name[:31 - len(suffix_text)]
+            candidate = f"{truncated}{suffix_text}"
+            if candidate not in used_names:
+                return candidate
+            suffix += 1
 
     def _get_classroom_colors(self, assignments: Dict[str, Tuple[str, int, int]]) -> Dict[str, str]:
         """Get a unique color for each classroom (as hex strings)."""
@@ -299,7 +382,7 @@ class ScheduleExporter:
                 'Grupo': group_id,
                 'Aula': classroom,
                 'Día': day_name,
-                'Hora': f"{hour}:00",
+                'Hora de Inicio': f"{hour}:00",
                 'Hora Final': f"{end_hour}:00",
                 'Duración': duration
             })
@@ -337,7 +420,7 @@ class ScheduleExporter:
             classroom_groups[classroom].append({
                 'Grupo': group_id,
                 'Día': day_name,
-                'Hora': f"{hour}:00",
+                'Hora de Inicio': f"{hour}:00",
                 'Hora Final': f"{end_hour}:00",
                 'Duración': duration
             })
@@ -345,12 +428,12 @@ class ScheduleExporter:
         rows = []
         for classroom in sorted(classroom_groups.keys()):
             for assignment in sorted(classroom_groups[classroom], 
-                                   key=lambda x: (x['Día'], x['Hora'])):
+                                   key=lambda x: (x['Día'], x['Hora de Inicio'])):
                 rows.append({
                     'Aula': classroom,
                     'Grupo': assignment['Grupo'],
                     'Día': assignment['Día'],
-                    'Hora': assignment['Hora'],
+                    'Hora de Inicio': assignment['Hora de Inicio'],
                     'Hora Final': assignment['Hora Final'],
                     'Duración': assignment['Duración']
                 })
