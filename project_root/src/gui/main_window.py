@@ -4,6 +4,8 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QFileDialog, QMessageBox,
                              QTabWidget, QStatusBar, QCheckBox, QSpinBox)
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon
+import sys
 from pathlib import Path
 
 from .course_manager_widget import CourseManagerWidget
@@ -33,6 +35,7 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         """Initialize the user interface."""
         self.setWindowTitle("SORTH - Sistema de Organización de Horarios")
+        self._set_window_icon()
         self.setGeometry(100, 100, 1200, 800)
 
         # Create central widget and main layout
@@ -80,12 +83,13 @@ class MainWindow(QMainWindow):
         )
         instructions.setWordWrap(True)
         instructions.setStyleSheet(
-            "background-color: #E3F2FD; "
-            "color: #1565C0; "
+            "background-color: #1F2937; "
+            "color: #E5E7EB; "
             "padding: 12px; "
-            "border-left: 4px solid #1967D2; "
-            "border-radius: 3px; "
-            "font-size: 11px;"
+            "border-left: 4px solid #3B82F6; "
+            "border-radius: 4px; "
+            "font-size: 11px; "
+            "line-height: 1.35;"
         )
         layout.addWidget(instructions)
 
@@ -313,7 +317,12 @@ class MainWindow(QMainWindow):
                 exporter = ScheduleExporter(self.time_model)
                 
                 if file_path.endswith('.csv'):
-                    exporter.to_csv(self.current_schedule, file_path)
+                    exporter.to_csv(
+                        self.current_schedule,
+                        file_path,
+                        groups=self.current_groups,
+                        course_name_by_code=self.current_course_name_map
+                    )
                 else:
                     exporter.to_excel(
                         self.current_schedule,
@@ -336,3 +345,19 @@ class MainWindow(QMainWindow):
                     "Error",
                     f"Error al exportar el horario:\n{str(e)}"
                 )
+
+    def _set_window_icon(self):
+        """Cargar y establecer el icono de la ventana."""
+        try:
+            if getattr(sys, 'frozen', False):
+                # En modo .exe (PyInstaller)
+                icon_path = Path(sys._MEIPASS) / 'assets' / 'sorth.ico'
+            else:
+                # En modo desarrollo
+                icon_path = Path(__file__).parent.parent.parent / 'assets' / 'sorth.ico'
+            
+            if icon_path.exists():
+                self.setWindowIcon(QIcon(str(icon_path)))
+        except Exception as e:
+            # Silenciosamente ignorar errores de icono
+            pass

@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QCompleter
 from PyQt6.QtCore import QStringListModel
 import json
+import sys
 from pathlib import Path
 
 
@@ -29,7 +30,11 @@ class CourseDialog(QDialog):
     def _load_course_names(self):
         """Load course code to name mapping from config JSON."""
         course_data = {}
-        config_path = Path(__file__).parent.parent.parent / "data" / "input" / "courses_config.json"
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            base_path = Path(sys._MEIPASS)
+            config_path = base_path / "data" / "input" / "courses_config.json"
+        else:
+            config_path = Path(__file__).parent.parent.parent / "data" / "input" / "courses_config.json"
         if config_path.exists():
             try:
                 with open(config_path, 'r', encoding='utf-8') as f:
@@ -315,7 +320,11 @@ class CourseManagerWidget(QWidget):
     def _load_history(self):
         """Load available courses from config JSON."""
         # Load available courses from config JSON only
-        config_path = Path(__file__).parent.parent.parent / "data" / "input" / "courses_config.json"
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            base_path = Path(sys._MEIPASS)
+            config_path = base_path / "data" / "input" / "courses_config.json"
+        else:
+            config_path = Path(__file__).parent.parent.parent / "data" / "input" / "courses_config.json"
         if config_path.exists():
             try:
                 with open(config_path, 'r', encoding='utf-8') as f:

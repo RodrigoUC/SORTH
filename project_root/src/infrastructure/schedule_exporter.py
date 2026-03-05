@@ -46,27 +46,14 @@ class ScheduleExporter:
         try:
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
-            # Create duration map from groups
-            duration_map = {}
-            course_name_map = {}
-            if groups:
-                for group in groups:
-                    duration_map[group.group_id] = group.duration
-                    name_from_group = getattr(group, 'course_name', None)
-                    if name_from_group:
-                        course_name_map[group.group_id] = name_from_group
-
-            # Fallback by course code map (from GUI courses)
-            if course_name_by_code is None:
-                course_name_by_code = {}
-            for group_id in assignments.keys():
-                if group_id not in course_name_map:
-                    course_code = group_id.rsplit('-G', 1)[0]
-                    if course_code in course_name_by_code and course_name_by_code[course_code]:
-                        course_name_map[group_id] = course_name_by_code[course_code]
+            duration_map, course_name_map = self._build_duration_and_name_maps(
+                assignments,
+                groups=groups,
+                course_name_by_code=course_name_by_code
+            )
 
             # Create detailed list
-            detailed_df = self._create_detailed_dataframe(assignments, duration_map)
+            detailed_df = self._create_detailed_dataframe(assignments, duration_map, course_name_map)
 
             with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
                 # Grid sheets by classroom - if requested
@@ -88,17 +75,26 @@ class ScheduleExporter:
             raise
 
     def to_csv(self, assignments: Dict[str, Tuple[str, int, int]], 
-               output_path: str) -> None:
+               output_path: str,
+               groups=None,
+               course_name_by_code: Dict[str, str] = None) -> None:
         """
         Export schedule to CSV file (detailed list only).
         
         Args:
             assignments: Dictionary mapping group_id to (classroom, day_idx, block_idx)
             output_path: Path to save the CSV file
+            groups: List of Group objects containing duration information
+            course_name_by_code: Mapping course code -> course name
         """
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
-        detailed_df = self._create_detailed_dataframe(assignments)
+        duration_map, course_name_map = self._build_duration_and_name_maps(
+            assignments,
+            groups=groups,
+            course_name_by_code=course_name_by_code
+        )
+        detailed_df = self._create_detailed_dataframe(assignments, duration_map, course_name_map)
         detailed_df.to_csv(output_path, index=False, encoding='utf-8-sig')
 
         print(f"✅ Horario exportado a: {output_path}")
@@ -336,12 +332,13 @@ class ScheduleExporter:
 
         # Set column widths
         worksheet.column_dimensions['A'].width = 15
-        worksheet.column_dimensions['B'].width = 15
+        worksheet.column_dimensions['B'].width = 30
         worksheet.column_dimensions['C'].width = 15
-        worksheet.column_dimensions['D'].width = 12
-        worksheet.column_dimensions['E'].width = 15
-        worksheet.column_dimensions['F'].width = 10
+        worksheet.column_dimensions['D'].width = 15
+        worksheet.column_dimensions['E'].width = 12
+        worksheet.column_dimensions['F'].width = 15
         worksheet.column_dimensions['G'].width = 12
+        worksheet.column_dimensions['H'].width = 10
 
     def _format_classroom_sheet(self, writer, sheet_name: str, num_rows: int):
         """Format the classroom summary sheet."""
@@ -367,10 +364,13 @@ class ScheduleExporter:
         worksheet.column_dimensions['G'].width = 12
 
     def _create_detailed_dataframe(self, assignments: Dict[str, Tuple[str, int, int]], 
-                                  duration_map: Dict = None) -> pd.DataFrame:
+                                  duration_map: Dict = None,
+                                  course_name_map: Dict = None) -> pd.DataFrame:
         """Create a detailed list of all assignments."""
         if duration_map is None:
             duration_map = {}
+        if course_name_map is None:
+            course_name_map = {}
             
         rows = []
 
@@ -379,6 +379,7 @@ class ScheduleExporter:
 
             # Extract course code from group_id (format: "CODE-G1")
             course_code = group_id.rsplit('-G', 1)[0]
+            course_name = course_name_map.get(group_id, "")
             
             # Get duration for this group
             duration = duration_map.get(group_id, 1)
@@ -386,12 +387,14 @@ class ScheduleExporter:
             # Calculate end hour
             end_block_i = block_i + duration - 1
             if end_block_i <= self.time_model.blocks_per_day:
-                _, end_hour = self.time_model.to_external(day_i, end_block_i)
+                _, end_hour_start = self.time_model.to_external(day_i, end_block_i)
+                end_hour = end_hour_start + 1
             else:
-                end_hour = hour
+                end_hour = hour + duration
 
             rows.append({
                 'Código Curso': course_code,
+                'Nombre Curso': course_name,
                 'Grupo': self._normalize_group_id(group_id),
                 'Aula': classroom,
                 'Día': day_name,
@@ -401,6 +404,32 @@ class ScheduleExporter:
             })
 
         return pd.DataFrame(rows)
+
+    def _build_duration_and_name_maps(self,
+                                      assignments: Dict[str, Tuple[str, int, int]],
+                                      groups=None,
+                                      course_name_by_code: Dict[str, str] = None):
+        """Build duration and course name maps by group id."""
+        duration_map = {}
+        course_name_map = {}
+
+        if groups:
+            for group in groups:
+                duration_map[group.group_id] = group.duration
+                name_from_group = getattr(group, 'course_name', None)
+                if name_from_group:
+                    course_name_map[group.group_id] = name_from_group
+
+        if course_name_by_code is None:
+            course_name_by_code = {}
+
+        for group_id in assignments.keys():
+            if group_id not in course_name_map:
+                course_code = group_id.rsplit('-G', 1)[0]
+                if course_code in course_name_by_code and course_name_by_code[course_code]:
+                    course_name_map[group_id] = course_name_by_code[course_code]
+
+        return duration_map, course_name_map
 
     def _create_grid_dataframe(self, assignments: Dict[str, Tuple[str, int, int]]) -> pd.DataFrame:
         """Create a visual grid/timetable view (deprecated - use _write_grid_sheet instead)."""
@@ -426,9 +455,10 @@ class ScheduleExporter:
             # Calculate end hour
             end_block_i = block_i + duration - 1
             if end_block_i <= self.time_model.blocks_per_day:
-                _, end_hour = self.time_model.to_external(day_i, end_block_i)
+                _, end_hour_start = self.time_model.to_external(day_i, end_block_i)
+                end_hour = end_hour_start + 1
             else:
-                end_hour = hour
+                end_hour = hour + duration
             
             classroom_groups[classroom].append({
                 'Grupo': self._normalize_group_id(group_id),

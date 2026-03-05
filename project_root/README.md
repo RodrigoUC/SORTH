@@ -107,6 +107,32 @@ Requiere:
 
 Los resultados se guardan automáticamente en `data/output/`.
 
+## Generar `.exe` para Windows
+
+Desde `project_root`:
+
+```powershell
+.\build_exe.ps1
+```
+
+Con icono personalizado (`.ico`):
+
+```powershell
+.\build_exe.ps1 -IconPath .\assets\sorth.ico
+```
+
+Si existe `assets/sorth.ico`, el script lo usa automáticamente sin pasar parámetros.
+
+Salida esperada:
+
+- `dist/SORTH.exe` (modo one-file)
+
+Notas:
+
+- El ejecutable incluye `data/input/courses_config.json`.
+- Para ejecutarlo en otra máquina Windows, copia `SORTH.exe`.
+- Si Windows muestra advertencia de SmartScreen, selecciona **Más información** -> **Ejecutar de todas formas**.
+
 ## Estructura de Archivos
 
 ### Entrada
@@ -190,6 +216,37 @@ project_root/
 
 ```
 
+## Importación desde PDF (Camelot)
+
+Para extraer datos de horarios o tablas desde archivos **PDF**, SORTH puede utilizar **Camelot**:
+
+```powershell
+pip install camelot-py
+```
+
+### Uso Básico
+
+```python
+import camelot
+
+# Extraer todas las tablas de un PDF
+tables = camelot.read_pdf('horario.pdf')
+
+# Acceder a la primera tabla
+df = tables[0].df
+
+# Exportar a Excel
+df.to_excel('aulas_disponibilidad.xlsx', index=False)
+```
+
+### Casos de Uso
+
+- ✅ Importar disponibilidad de aulas desde PDF de horarios existentes
+- ✅ Extraer configuración de capacidades desde documentos PDF
+- ✅ Convertir PDFs históricos a formato Excel compatible
+
+Documentación: [Camelot Documentation](https://camelot-py.readthedocs.io/)
+
 ## Próximas Mejoras
 
 - [ ] Validaciones adicionales de restricciones
@@ -197,6 +254,7 @@ project_root/
 - [ ] Importación de cursos desde Excel
 - [ ] Restricciones de horario por curso
 - [ ] Modo de edición manual del horario
+- [ ] Interfaz para importar PDFs con Camelot
 
 ## Licencia
 
