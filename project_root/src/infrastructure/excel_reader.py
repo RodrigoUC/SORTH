@@ -1,326 +1,312 @@
 # src/infrastructure/excel_reader.py
 
-from typing import Dict, Tuple
 import pandas as pd
-import re
 import unicodedata
+from typing import Dict
 
 from ..scheduling.classroom import Classroom
 from ..scheduling.course import Course
+from ..scheduling.time_model import TimeModel
 
-
-DAY_NAMES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+# Mapping from Excel day abbreviation to full Spanish name
+DAY_ABBR = {
+    "L": "Lunes",
+    "I": "Martes",
+    "M": "Miércoles",
+    "J": "Jueves",
+    "V": "Viernes",
+    "S": "Sábado",
+}
 
 
 class ExcelReader:
-    """
-    Responsible for transforming the Excel input file into
-    domain objects and structured availability data.
-    """
 
     def __init__(self, file_path: str):
         self.file_path = file_path
 
-    # ----------------------------
+    # ------------------------------------------------------------------
     # Public API
-    # ----------------------------
+    # ------------------------------------------------------------------
 
     def load_classrooms(self) -> Dict[str, Classroom]:
         """
-        Reads the sheet 'Capacidad aulas' and builds Classroom objects.
-        If classroom name starts with 'L', it is treated as LAB.
+        Read sheet 'Aulas' and build Classroom objects.
+        Columns: # DE AULA, DESCRIPCIÓN, CAMPUS, CAPACIDAD, CAPACIDAD 80%
+        Room type: starts with 'L' → LAB, otherwise → REGULAR.
         """
-        df = pd.read_excel(self.file_path, sheet_name="Capacidad aulas")
+        df = pd.read_excel(self.file_path, sheet_name="Aulas")
 
         classrooms = {}
-
         for _, row in df.iterrows():
-            name = str(row["# DE AULA"]).strip()
-
-            if not name or name.lower() == "nan":
+            raw_name = row.get("# DE AULA")
+            if pd.isna(raw_name):
                 continue
 
-            capacity = int(row["CAPACIDAD"])
+            name = str(raw_name).strip()
+            if not name:
+                continue
+
+            capacity_raw = row.get("CAPACIDAD")
+            capacity = int(capacity_raw) if pd.notna(capacity_raw) else 0
+
+            description_raw = row.get("DESCRIPCIÓN")
+            description = str(description_raw).strip() if pd.notna(description_raw) else ""
+
+            campus_raw = row.get("CAMPUS")
+            campus = str(campus_raw).strip() if pd.notna(campus_raw) else ""
+
             room_type = "LAB" if name.startswith("L") else "REGULAR"
 
             classrooms[name] = Classroom(
                 name=name,
                 capacity=capacity,
-                room_type=room_type
+                room_type=room_type,
+                description=description,
+                campus=campus,
             )
 
         return classrooms
 
-    def load_availability(self) -> Dict[Tuple[str, str, int], bool]:
+    def load_courses(self, known_classrooms: set[str] | None = None) -> list[Course]:
         """
-        Parses the sheet 'Aulas' and builds a map:
-        (classroom_name, day, hour) -> available (bool)
+        Read sheet 'Cursos' and build Course objects.
+
+        Columns: Curso, Nombre de Curso, Cantidad de Grupos, Horas, Aula, Días
+
+        Each row represents one suggested group of a course.
+        Multiple rows with the same course code → multiple groups.
+
+        Horas format: 'HHMM-HHMM' (e.g. '0800-1055') or '-' / blank → None
+        Días format:  single abbreviation or comma-separated (e.g. 'L', 'L,M')
+
+        If known_classrooms is provided, any Aula reference not in that set
+        is silently ignored (treated as no classroom preference).
         """
-        df = pd.read_excel(self.file_path, sheet_name="Aulas", header=None)
+        if known_classrooms is None:
+            known_classrooms = set(self.load_classrooms().keys())
 
-        availability = {}
-        blocks = self._detect_schedule_blocks(df)
+        df = pd.read_excel(self.file_path, sheet_name="Cursos")
 
-        for block in blocks:
-            classroom_name = block["classroom"]
-            day_columns = block["day_columns"]
-            hour_column = block["hour_column"]
-            start_row = block["start_row"]
-            end_row = block["end_row"]
+        # Normalize column names for robust matching
+        col_map = self._build_col_map(df.columns)
 
-            for row in range(start_row, end_row + 1):
-                hour_value = df.iloc[row, hour_column]
-
-                if pd.isna(hour_value):
-                    continue
-
-                hour = self._normalize_hour(hour_value)
-
-                for col_index, day_name in day_columns.items():
-                    cell_value = df.iloc[row, col_index]
-                    available = pd.isna(cell_value)
-
-                    availability[(classroom_name, day_name, hour)] = available
-
-        return availability
-
-    def load_courses(self) -> list[Course]:
-        """
-        Attempts to read a courses sheet and build Course objects.
-        Falls back to a minimal auto-generated list if no sheet is found.
-        """
-        sheets = pd.read_excel(self.file_path, sheet_name=None)
-        course_df = self._find_courses_sheet(sheets)
-
-        courses = []
-        if course_df is not None:
-            courses = self._build_courses_from_df(course_df)
-
-        if not courses:
-            room_types = {
-                classroom.room_type
-                for classroom in self.load_classrooms().values()
-            }
-            for room_type in sorted(room_types):
-                courses.append(
-                    Course(
-                        code=f"AUTO-{room_type}",
-                        number_of_groups=1,
-                        duration=1,
-                        required_room_type=room_type,
-                        suggested_classroom=None
-                    )
-                )
-
-        return courses
-
-    # ----------------------------
-    # Internal helpers
-    # ----------------------------
-
-    def _detect_schedule_blocks(self, df: pd.DataFrame):
-        """
-        Detects schedule blocks dynamically by scanning for day headers.
-        Returns list of dicts describing each block.
-        """
-        blocks = []
-
-        for row_idx in range(len(df)):
-            row = df.iloc[row_idx]
-
-            if self._is_day_header_row(row):
-                day_columns = self._extract_day_columns(row)
-                classroom_name = self._find_classroom_name(df, row_idx)
-                hour_column = self._detect_hour_column(df, row_idx)
-                end_row = self._detect_block_end(df, row_idx, hour_column)
-
-                blocks.append({
-                    "classroom": classroom_name,
-                    "day_columns": day_columns,
-                    "hour_column": hour_column,
-                    "start_row": row_idx + 1,
-                    "end_row": end_row
-                })
-
-        return blocks
-
-    def _is_day_header_row(self, row: pd.Series) -> bool:
-        matches = sum(
-            1 for value in row
-            if isinstance(value, str) and value.strip() in DAY_NAMES
-        )
-        return matches >= 3
-
-    def _extract_day_columns(self, row: pd.Series) -> Dict[int, str]:
-        day_columns = {}
-
-        for col_idx, value in enumerate(row):
-            if isinstance(value, str) and value.strip() in DAY_NAMES:
-                day_columns[col_idx] = value.strip()
-
-        return day_columns
-
-    def _find_classroom_name(self, df: pd.DataFrame, header_row_idx: int) -> str:
-        for offset in range(1, 6):
-            row_idx = header_row_idx - offset
-            if row_idx < 0:
-                break
-
-            row = df.iloc[row_idx]
-            for value in row:
-                if pd.isna(value):
-                    continue
-
-                if isinstance(value, str):
-                    value = value.strip()
-                    if value and value not in DAY_NAMES and value.lower() != "hora":
-                        return value
-
-                if isinstance(value, (int, float)):
-                    if isinstance(value, float) and value.is_integer():
-                        value = int(value)
-                    return str(value)
-
-        raise ValueError(
-            f"Could not determine classroom name near row {header_row_idx}"
-        )
-
-    def _detect_hour_column(self, df: pd.DataFrame, header_row_idx: int) -> int:
-        for col_idx in range(df.shape[1]):
-            consecutive_matches = 0
-
-            for row_idx in range(header_row_idx + 1, min(header_row_idx + 10, len(df))):
-                value = df.iloc[row_idx, col_idx]
-
-                if self._looks_like_hour(value):
-                    consecutive_matches += 1
-
-            if consecutive_matches >= 3:
-                return col_idx
-
-        raise ValueError(f"Could not detect hour column below row {header_row_idx}")
-
-    def _detect_block_end(self, df: pd.DataFrame, header_row_idx: int, hour_column: int) -> int:
-        last_valid_row = header_row_idx
-
-        for row_idx in range(header_row_idx + 1, len(df)):
-            value = df.iloc[row_idx, hour_column]
-
-            if pd.isna(value):
-                break
-
-            last_valid_row = row_idx
-
-        return last_valid_row
-
-    def _looks_like_hour(self, value) -> bool:
-        if pd.isna(value):
-            return False
-
-        if hasattr(value, "hour"):
-            return True
-
-        if isinstance(value, str):
-            return bool(re.match(r"^\d{1,2}:\d{2}", value.strip()))
-
-        return False
-
-    def _normalize_hour(self, value) -> int:
-        if hasattr(value, "hour"):
-            return int(value.hour)
-
-        if isinstance(value, str):
-            hour_part = value.strip().split(":")[0]
-            return int(hour_part)
-
-        raise ValueError(f"Unrecognized hour format: {value}")
-
-    def _normalize_header(self, value) -> str:
-        text = str(value).strip().lower()
-        text = unicodedata.normalize("NFKD", text)
-        return "".join(ch for ch in text if not unicodedata.combining(ch))
-
-    def _find_courses_sheet(self, sheets: dict) -> pd.DataFrame | None:
-        candidates = []
-
-        code_keys = ["codigo", "sigla", "curso", "asignatura", "ramo"]
-        group_keys = ["grupo", "grupos", "seccion", "secciones", "paralelo"]
-
-        for name, df in sheets.items():
-            columns = [self._normalize_header(c) for c in df.columns]
-            has_code = any(any(k in col for k in code_keys) for col in columns)
-            has_group = any(any(k in col for k in group_keys) for col in columns)
-
-            if has_code:
-                score = 1 + (1 if has_group else 0)
-                candidates.append((score, name, df))
-
-        if not candidates:
-            return None
-
-        candidates.sort(reverse=True, key=lambda item: item[0])
-        return candidates[0][2]
-
-    def _build_courses_from_df(self, df: pd.DataFrame) -> list[Course]:
-        columns = [self._normalize_header(c) for c in df.columns]
-
-        def find_col(keys):
-            for idx, col in enumerate(columns):
-                if any(k in col for k in keys):
-                    return idx
-            return None
-
-        code_idx = find_col(["codigo", "sigla", "curso", "asignatura", "ramo"])
-        group_idx = find_col(["grupo", "grupos", "seccion", "secciones", "paralelo"])
-        duration_idx = find_col(["duracion", "duración", "horas", "bloques", "dur"])
-        room_idx = find_col(["tipo", "laboratorio", "lab", "sala", "aula"])
-        suggested_idx = find_col(["aula", "sala", "sugerida", "sugerido"])
-
-        courses = []
+        course_rows: dict[str, list[dict]] = {}
 
         for _, row in df.iterrows():
-            if code_idx is None:
-                break
-
-            raw_code = row.iloc[code_idx]
-            if pd.isna(raw_code):
+            code_raw = self._get(row, col_map, "curso")
+            if code_raw is None:
                 continue
-
-            code = str(raw_code).strip()
+            code = str(code_raw).strip()
             if not code:
                 continue
 
-            raw_groups = row.iloc[group_idx] if group_idx is not None else 1
-            groups = int(raw_groups) if pd.notna(raw_groups) else 1
+            name_raw = self._get(row, col_map, "nombre")
+            name = str(name_raw).strip() if name_raw is not None else None
 
-            raw_duration = row.iloc[duration_idx] if duration_idx is not None else 1
-            duration = int(raw_duration) if pd.notna(raw_duration) else 1
+            horas_raw = self._get(row, col_map, "horas")
+            start_min, end_min = self._parse_horas(horas_raw)
 
-            room_type = "REGULAR"
-            if room_idx is not None:
-                raw_room = row.iloc[room_idx]
-                if pd.notna(raw_room):
-                    raw_room = str(raw_room).strip().lower()
-                    if "lab" in raw_room:
-                        room_type = "LAB"
+            aula_raw = self._get(row, col_map, "aula")
+            aula = str(aula_raw).strip() if aula_raw is not None else None
+            if aula and aula.lower() in ("nan", "-", ""):
+                aula = None
+            # Ignore aula references that don't exist in the classrooms sheet
+            if aula and aula not in known_classrooms:
+                aula = None
 
-            suggested = None
-            if suggested_idx is not None:
-                raw_suggested = row.iloc[suggested_idx]
-                if pd.notna(raw_suggested):
-                    suggested = str(raw_suggested).strip()
+            dias_raw = self._get(row, col_map, "dias")
+            days = self._parse_dias(dias_raw)
 
-            if groups < 1 or duration < 1:
-                continue
+            course_rows.setdefault(code, []).append({
+                "name": name,
+                "start_min": start_min,
+                "end_min": end_min,
+                "aula": aula,
+                "days": days,
+            })
 
-            courses.append(
-                Course(
-                    code=code,
-                    number_of_groups=groups,
-                    duration=duration,
-                    required_room_type=room_type,
-                    suggested_classroom=suggested
-                )
-            )
+        classrooms_info = self.load_classrooms()
+
+        courses = []
+        for code, rows in course_rows.items():
+            name = next((r["name"] for r in rows if r["name"]), None)
+            number_of_groups = len(rows)
+            duration_min = self._most_common_duration(rows)
+            suggested_classroom = self._most_common_aula(rows)
+            preferred_day = self._most_common_day(rows)
+            preferred_start_min = self._most_common_start(rows)
+
+            # Infer room type from the suggested classroom's actual type.
+            # Fall back to code-suffix heuristic only when no known classroom.
+            if suggested_classroom and suggested_classroom in classrooms_info:
+                room_type = classrooms_info[suggested_classroom].room_type
+            else:
+                room_type = self._infer_room_type(code)
+
+            # Per-group suggestions: preserve each row's individual aula/day/hour
+            group_suggestions = [
+                {
+                    "aula": r["aula"],
+                    "preferred_day": r["days"][0] if r["days"] else None,
+                    "preferred_start_min": r["start_min"],
+                }
+                for r in rows
+            ]
+
+            courses.append(Course(
+                code=code,
+                name=name,
+                number_of_groups=number_of_groups,
+                duration_min=duration_min,
+                required_room_type=room_type,
+                suggested_classroom=suggested_classroom,
+                preferred_day=preferred_day,
+                preferred_start_min=preferred_start_min,
+                group_suggestions=group_suggestions,
+            ))
 
         return courses
+
+    def load_course_classroom_map(self, known_classrooms: set[str] | None = None) -> dict[str, list[str]]:
+        """
+        Return a mapping: classroom_name -> [course_codes] based on the Aula
+        column in the Cursos sheet. Used to set classroom restrictions.
+        Only includes classrooms present in known_classrooms (if provided).
+        """
+        if known_classrooms is None:
+            known_classrooms = set(self.load_classrooms().keys())
+
+        df = pd.read_excel(self.file_path, sheet_name="Cursos")
+        col_map = self._build_col_map(df.columns)
+
+        classroom_courses: dict[str, list[str]] = {}
+        for _, row in df.iterrows():
+            code_raw = self._get(row, col_map, "curso")
+            aula_raw = self._get(row, col_map, "aula")
+
+            if code_raw is None or aula_raw is None:
+                continue
+
+            code = str(code_raw).strip()
+            aula = str(aula_raw).strip()
+
+            if not code or not aula or aula.lower() in ("nan", "-", ""):
+                continue
+            if aula not in known_classrooms:
+                continue
+
+            classroom_courses.setdefault(aula, [])
+            if code not in classroom_courses[aula]:
+                classroom_courses[aula].append(code)
+
+        return classroom_courses
+
+    # ------------------------------------------------------------------
+    # Parsing helpers
+    # ------------------------------------------------------------------
+
+    def _parse_horas(self, value) -> tuple[int | None, int | None]:
+        """
+        Parse 'HHMM-HHMM' into (start_min, end_min).
+        Returns (None, None) for blank or '-' values.
+        """
+        if value is None or pd.isna(value):
+            return None, None
+        s = str(value).strip()
+        if s in ("", "-"):
+            return None, None
+        if "-" in s:
+            parts = s.split("-")
+            if len(parts) == 2:
+                try:
+                    start = TimeModel.hhmm_to_minutes(parts[0].strip())
+                    end   = TimeModel.hhmm_to_minutes(parts[1].strip())
+                    return start, end
+                except (ValueError, IndexError):
+                    pass
+        return None, None
+
+    def _parse_dias(self, value) -> list[str]:
+        """
+        Parse day abbreviation(s) into full Spanish day names.
+        Accepts single value ('L') or comma-separated ('L,M').
+        Returns empty list if blank/null.
+        """
+        if value is None or pd.isna(value):
+            return []
+        s = str(value).strip()
+        if not s or s == "-":
+            return []
+        result = []
+        for abbr in s.split(","):
+            abbr = abbr.strip().upper()
+            if abbr in DAY_ABBR:
+                result.append(DAY_ABBR[abbr])
+        return result
+
+    def _infer_room_type(self, code: str) -> str:
+        upper = code.strip().upper()
+        if upper.endswith("L") or upper.endswith("P"):
+            return "LAB"
+        return "REGULAR"
+
+    # ------------------------------------------------------------------
+    # Column mapping
+    # ------------------------------------------------------------------
+
+    def _build_col_map(self, columns) -> dict[str, str]:
+        """
+        Build a normalized name → original name mapping for DataFrame columns.
+        """
+        mapping = {}
+        for col in columns:
+            normalized = self._normalize(str(col))
+            mapping[normalized] = col
+        return mapping
+
+    def _normalize(self, text: str) -> str:
+        text = text.strip().lower()
+        text = unicodedata.normalize("NFKD", text)
+        return "".join(ch for ch in text if not unicodedata.combining(ch))
+
+    def _get(self, row, col_map: dict, key: str):
+        """
+        Get a value from a row using a partial normalized key match.
+        Returns None if column not found or value is NaN.
+        """
+        for norm_col, orig_col in col_map.items():
+            if key in norm_col:
+                val = row[orig_col]
+                return None if pd.isna(val) else val
+        return None
+
+    # ------------------------------------------------------------------
+    # Aggregation helpers (most common value across group rows)
+    # ------------------------------------------------------------------
+
+    def _most_common_duration(self, rows: list[dict]) -> int:
+        durations = []
+        for r in rows:
+            if r["start_min"] is not None and r["end_min"] is not None:
+                durations.append(r["end_min"] - r["start_min"])
+        if not durations:
+            return 60  # default 1 hour
+        return max(set(durations), key=durations.count)
+
+    def _most_common_aula(self, rows: list[dict]) -> str | None:
+        aulas = [r["aula"] for r in rows if r["aula"]]
+        if not aulas:
+            return None
+        return max(set(aulas), key=aulas.count)
+
+    def _most_common_day(self, rows: list[dict]) -> str | None:
+        days = [d for r in rows for d in r["days"]]
+        if not days:
+            return None
+        return max(set(days), key=days.count)
+
+    def _most_common_start(self, rows: list[dict]) -> int | None:
+        starts = [r["start_min"] for r in rows if r["start_min"] is not None]
+        if not starts:
+            return None
+        return max(set(starts), key=starts.count)

@@ -3,468 +3,413 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QTableWidget, QTableWidgetItem, QDialog, QLabel,
                              QLineEdit, QSpinBox, QComboBox, QFormLayout,
-                             QDialogButtonBox, QMessageBox, QHeaderView)
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QCompleter
-from PyQt6.QtCore import QStringListModel
-import json
-import sys
-from pathlib import Path
+                             QDialogButtonBox, QMessageBox, QHeaderView, QCheckBox,
+                             QTimeEdit)
+from PyQt6.QtCore import Qt, QTime
+
+from ..scheduling.course import Course
+from ..scheduling.time_model import TimeModel
+
+
+def _confirm(parent, title: str, message: str) -> bool:
+    """Styled confirmation dialog with colored header."""
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(title)
+    dlg.setModal(True)
+    dlg.setMinimumWidth(420)
+
+    outer = QVBoxLayout()
+    outer.setContentsMargins(0, 0, 0, 0)
+    outer.setSpacing(0)
+
+    header = QLabel(f"  ⚠️  {title}")
+    header.setStyleSheet(
+        "background-color: #E65100; color: #FFFFFF; "
+        "font-size: 12pt; font-weight: bold; padding: 14px 20px;"
+    )
+    outer.addWidget(header)
+
+    body = QWidget()
+    body_layout = QVBoxLayout(body)
+    body_layout.setContentsMargins(28, 20, 28, 20)
+    body_layout.setSpacing(20)
+
+    lbl = QLabel(message)
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet("font-size: 11pt;")
+    body_layout.addWidget(lbl)
+
+    buttons = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No
+    )
+    buttons.accepted.connect(dlg.accept)
+    buttons.rejected.connect(dlg.reject)
+    body_layout.addWidget(buttons)
+    outer.addWidget(body)
+
+    dlg.setLayout(outer)
+    return dlg.exec() == QDialog.DialogCode.Accepted
 
 
 class CourseDialog(QDialog):
     """Dialog for adding/editing a course."""
 
-    def __init__(self, parent=None, course_data=None, code_history=None, name_history=None, duration_history=None):
+    DAYS = ["(Sin preferencia)", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+
+    def __init__(self, parent=None, course: Course = None):
         super().__init__(parent)
-        self.course_data = course_data
-        self.code_history = code_history or []
-        self.name_history = name_history or []
-        self.duration_history = duration_history or []
-        
-        # Load course name mapping from config JSON
-        self.course_names = self._load_course_names()
-        self.name_to_course = self._load_course_names_reverse()
-        self.init_ui()
-    
-    def _load_course_names(self):
-        """Load course code to name mapping from config JSON."""
-        course_data = {}
-        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-            base_path = Path(sys._MEIPASS)
-            config_path = base_path / "data" / "input" / "courses_config.json"
-        else:
-            config_path = Path(__file__).parent.parent.parent / "data" / "input" / "courses_config.json"
-        if config_path.exists():
-            try:
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config_data = json.load(f)
-                    courses = config_data.get("courses", [])
-                    for course in courses:
-                        code = course.get("code")
-                        if code:
-                            course_data[code] = {
-                                "name": course.get("name", ""),
-                                "duration": max(1, course.get("duration", 1))  # Min 1
-                            }
-            except Exception as e:
-                print(f"Error loading course names: {e}")
-        return course_data
-    
-    def _load_course_names_reverse(self):
-        """Load reverse mapping: name → {code, duration}."""
-        name_to_code = {}
-        for code, data in self.course_names.items():
-            name = data.get("name", "")
-            if name:
-                name_to_code[name] = {
-                    "code": code,
-                    "duration": data.get("duration", 1)
-                }
-        return name_to_code
-
-    def init_ui(self):
-        """Initialize the dialog UI."""
-        self.setWindowTitle("Agregar Curso" if not self.course_data else "Editar Curso")
+        self.course = course
+        self.setWindowTitle("Agregar Curso" if not course else "Editar Curso")
         self.setModal(True)
-        self.resize(450, 400)
+        self.resize(460, 380)
+        self._init_ui()
 
+    def _init_ui(self):
         layout = QFormLayout()
 
-        # Code field with autocomplete
+        # Code
         self.code_edit = QLineEdit()
-        self.code_edit.setPlaceholderText("Ej: BIJ400, BIJ400L, QUX103")
-        code_completer = QCompleter(self.code_history)
-        code_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.code_edit.setCompleter(code_completer)
+        self.code_edit.setPlaceholderText("Ej: BIJ400, BIJ400L")
+        self.code_edit.textChanged.connect(self._update_room_type_label)
         layout.addRow("Código del Curso:", self.code_edit)
 
-        # Name field with autocomplete
+        # Name
         self.name_edit = QLineEdit()
-        self.name_edit.setPlaceholderText("Ej: Biología General")
-        name_completer = QCompleter(self.name_history)
-        name_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.name_edit.setCompleter(name_completer)
-        self.name_edit.textChanged.connect(self.update_code_from_name)
-        layout.addRow("Nombre (opcional):", self.name_edit)
+        self.name_edit.setPlaceholderText("Ej: Biología General (opcional)")
+        layout.addRow("Nombre:", self.name_edit)
 
         # Number of groups
         self.groups_spin = QSpinBox()
         self.groups_spin.setMinimum(1)
-        self.groups_spin.setMaximum(20)
+        self.groups_spin.setMaximum(50)
         self.groups_spin.setValue(1)
         layout.addRow("Número de Grupos:", self.groups_spin)
 
-        # Duration with history suggestions
-        self.duration_combo = QComboBox()
-        # Add unique durations from history, then add defaults
-        duration_options = sorted(set(self.duration_history + [1, 2, 3, 4, 5, 6]))
-        for duration in duration_options[:6]:  # Limit to 6
-            self.duration_combo.addItem(f"{duration} bloque(s)", duration)
-        self.duration_combo.setCurrentIndex(1)  # Default to 2 blocks
-        layout.addRow("Duración:", self.duration_combo)
+        # Duration — hours + minutes
+        dur_layout = QHBoxLayout()
+        self.dur_hours = QSpinBox()
+        self.dur_hours.setRange(0, 14)
+        self.dur_hours.setValue(1)
+        self.dur_hours.setSuffix(" h")
+        self.dur_mins = QSpinBox()
+        self.dur_mins.setRange(0, 55)
+        self.dur_mins.setSingleStep(5)
+        self.dur_mins.setValue(30)
+        self.dur_mins.setSuffix(" min")
+        dur_layout.addWidget(self.dur_hours)
+        dur_layout.addWidget(self.dur_mins)
+        layout.addRow("Duración:", dur_layout)
 
-        # Room type (informational)
+        # Room type (auto-detected)
         self.room_type_label = QLabel()
-        self.room_type_label.setStyleSheet("color: gray; font-style: italic;")
-        self.update_room_type_display()
-        self.code_edit.textChanged.connect(self.update_room_type_display)
-        self.code_edit.textChanged.connect(self.update_name_from_code)
         layout.addRow("Tipo de Sala:", self.room_type_label)
 
         # Suggested classroom
         self.classroom_edit = QLineEdit()
-        self.classroom_edit.setPlaceholderText("Ej: 601, L301 (opcional)")
+        self.classroom_edit.setPlaceholderText("Ej: 601, LBIO3B (opcional)")
         layout.addRow("Aula Sugerida:", self.classroom_edit)
 
-        # Preferred day (optional)
-        self.preferred_day_combo = QComboBox()
-        self.preferred_day_combo.addItems([
-            "(Sin preferencia)",
-            "Lunes",
-            "Martes",
-            "Miércoles",
-            "Jueves",
-            "Viernes",
-            "Sábado"
-        ])
-        layout.addRow("Día Preferido (opcional):", self.preferred_day_combo)
+        # Preferred day
+        self.day_combo = QComboBox()
+        self.day_combo.addItems(self.DAYS)
+        layout.addRow("Día Preferido:", self.day_combo)
 
-        # Preferred hour (optional)
-        self.preferred_hour_combo = QComboBox()
-        self.preferred_hour_combo.addItems([
-            "(Sin preferencia)",
-            "7:00", "8:00", "9:00", "10:00", "11:00", "12:00",
-            "13:00", "14:00", "15:00", "16:00", "17:00", "18:00"
-        ])
-        layout.addRow("Hora Preferida (opcional):", self.preferred_hour_combo)
+        # Preferred start time — QTimeEdit for clarity
+        time_layout = QHBoxLayout()
+        self.chk_pref_time = QCheckBox("Activar hora preferida")
+        self.chk_pref_time.toggled.connect(self._toggle_pref_time)
+        self.pref_time_edit = QTimeEdit()
+        self.pref_time_edit.setDisplayFormat("HH:mm")
+        self.pref_time_edit.setTime(QTime(8, 0))
+        self.pref_time_edit.setMinimumTime(QTime(7, 0))
+        self.pref_time_edit.setMaximumTime(QTime(21, 0))
+        self.pref_time_edit.setToolTip("Hora de inicio preferida para este curso (ej: 08:00, 13:00)")
+        time_layout.addWidget(self.chk_pref_time)
+        time_layout.addWidget(self.pref_time_edit)
+        time_layout.addStretch()
+        layout.addRow("Hora Preferida:", time_layout)
 
-        # Load existing data if editing
-        if self.course_data:
-            self.code_edit.setText(self.course_data.get("code", ""))
-            self.name_edit.setText(self.course_data.get("name", ""))
-            self.groups_spin.setValue(self.course_data.get("number_of_groups", 1))
-            
-            # Load duration
-            duration = self.course_data.get("duration", 2)
-            index = self.duration_combo.findData(duration)
-            if index >= 0:
-                self.duration_combo.setCurrentIndex(index)
-            
-            self.classroom_edit.setText(self.course_data.get("suggested_classroom", "") or "")
-            
-            # Load preferred day
-            preferred_day = self.course_data.get("preferred_day")
-            if preferred_day:
-                index = self.preferred_day_combo.findText(preferred_day)
-                if index >= 0:
-                    self.preferred_day_combo.setCurrentIndex(index)
-            
-            # Load preferred hour
-            preferred_hour = self.course_data.get("preferred_hour")
-            if preferred_hour:
-                hour_text = f"{preferred_hour}:00"
-                index = self.preferred_hour_combo.findText(hour_text)
-                if index >= 0:
-                    self.preferred_hour_combo.setCurrentIndex(index)
+        # Split across days
+        self.split_combo = QComboBox()
+        self.split_combo.addItems([
+            "Automático (dividir si > 4.5h)",
+            "Forzar división en varios días",
+            "No dividir (asignar en un solo día)",
+        ])
+        self.split_combo.setToolTip(
+            "Automático: se divide solo si la duración supera 4.5 horas.\n"
+            "Forzar división: siempre se divide en bloques de 2h en días distintos.\n"
+            "No dividir: se asigna completo en un solo día sin importar la duración."
+        )
+        layout.addRow("División en días:", self.split_combo)
 
         # Buttons
-        button_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | 
-            QDialogButtonBox.StandardButton.Cancel
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        layout.addRow(button_box)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
 
         self.setLayout(layout)
 
-    def update_room_type_display(self):
-        """Update the room type display based on code."""
+        # Load existing data if editing
+        if self.course:
+            self.code_edit.setText(self.course.code)
+            self.name_edit.setText(self.course.name or "")
+            self.groups_spin.setValue(self.course.number_of_groups)
+            h, m = divmod(self.course.duration_min, 60)
+            self.dur_hours.setValue(h)
+            self.dur_mins.setValue(m)
+            self.classroom_edit.setText(self.course.suggested_classroom or "")
+            if self.course.preferred_day:
+                idx = self.day_combo.findText(self.course.preferred_day)
+                if idx >= 0:
+                    self.day_combo.setCurrentIndex(idx)
+            if self.course.preferred_start_min is not None:
+                self.chk_pref_time.setChecked(True)
+                ph, pm = divmod(self.course.preferred_start_min, 60)
+                self.pref_time_edit.setTime(QTime(ph, pm))
+            else:
+                self.chk_pref_time.setChecked(False)
+
+            # Split
+            fs = self.course.force_split
+            if fs is True:
+                self.split_combo.setCurrentIndex(1)
+            elif fs is False:
+                self.split_combo.setCurrentIndex(2)
+            else:
+                self.split_combo.setCurrentIndex(0)
+
+        self._update_room_type_label()
+        self._toggle_pref_time(self.chk_pref_time.isChecked())
+
+    def _update_room_type_label(self):
         code = self.code_edit.text().strip().upper()
-        if code.endswith('L') or code.endswith('P'):
+        if code.endswith("L") or code.endswith("P"):
             self.room_type_label.setText("🔬 LAB (detectado automáticamente)")
-            self.room_type_label.setStyleSheet("color: blue;")
+            self.room_type_label.setStyleSheet("color: #1565C0;")
         else:
             self.room_type_label.setText("🏫 REGULAR (detectado automáticamente)")
-            self.room_type_label.setStyleSheet("color: green;")
-    
-    def update_name_from_code(self):
-        """Auto-fill course name and duration from code if it exists in config."""
-        code = self.code_edit.text().strip()
-        if code and code in self.course_names:
-            course_info = self.course_names[code]
-            # Always replace with the name from config for this code
-            self.name_edit.blockSignals(True)  # Prevent infinite recursion
-            self.name_edit.setText(course_info.get("name", ""))
-            self.name_edit.blockSignals(False)
-            # Update duration from config
-            duration = course_info.get("duration", 1)
-            index = self.duration_combo.findData(duration)
-            if index >= 0:
-                self.duration_combo.setCurrentIndex(index)
-    
-    def update_code_from_name(self):
-        """Auto-fill course code and duration from name if it exists in config."""
-        name = self.name_edit.text().strip()
-        if name and name in self.name_to_course:
-            course_info = self.name_to_course[name]
-            # Always replace with the code from config for this name
-            self.code_edit.blockSignals(True)  # Prevent infinite recursion
-            self.code_edit.setText(course_info.get("code", ""))
-            self.code_edit.blockSignals(False)
-            # Update duration from config
-            duration = course_info.get("duration", 1)
-            index = self.duration_combo.findData(duration)
-            if index >= 0:
-                self.duration_combo.setCurrentIndex(index)
-            # Update room type display
-            self.update_room_type_display()
+            self.room_type_label.setStyleSheet("color: #2E7D32;")
 
-    def get_course_data(self):
-        """Get the course data from the form."""
-        suggested = self.classroom_edit.text().strip()
-        
-        # Get preferred day (None if no preference)
-        preferred_day_text = self.preferred_day_combo.currentText()
-        preferred_day = None if preferred_day_text == "(Sin preferencia)" else preferred_day_text
-        
-        # Get preferred hour (None if no preference)
-        preferred_hour_text = self.preferred_hour_combo.currentText()
-        preferred_hour = None
-        if preferred_hour_text != "(Sin preferencia)":
-            preferred_hour = int(preferred_hour_text.split(":")[0])
-        
-        return {
-            "code": self.code_edit.text().strip(),
-            "name": self.name_edit.text().strip() or None,
-            "number_of_groups": self.groups_spin.value(),
-            "duration": self.duration_combo.currentData(),
-            "suggested_classroom": suggested if suggested else None,
-            "preferred_day": preferred_day,
-            "preferred_hour": preferred_hour
-        }
+    def _toggle_pref_time(self, enabled: bool):
+        self.pref_time_edit.setEnabled(enabled)
+
+    def get_course(self) -> Course | None:
+        code = self.code_edit.text().strip()
+        if not code:
+            return None
+
+        duration_min = self.dur_hours.value() * 60 + self.dur_mins.value()
+        if duration_min <= 0:
+            duration_min = 60
+
+        code_upper = code.upper()
+        room_type = "LAB" if (code_upper.endswith("L") or code_upper.endswith("P")) else "REGULAR"
+
+        preferred_day = self.day_combo.currentText()
+        if preferred_day == "(Sin preferencia)":
+            preferred_day = None
+
+        preferred_start_min = None
+        if self.chk_pref_time.isChecked():
+            t = self.pref_time_edit.time()
+            preferred_start_min = t.hour() * 60 + t.minute()
+
+        suggested = self.classroom_edit.text().strip() or None
+
+        idx = self.split_combo.currentIndex()
+        force_split = None if idx == 0 else (True if idx == 1 else False)
+
+        return Course(
+            code=code,
+            name=self.name_edit.text().strip() or None,
+            number_of_groups=self.groups_spin.value(),
+            duration_min=duration_min,
+            required_room_type=room_type,
+            suggested_classroom=suggested,
+            preferred_day=preferred_day,
+            preferred_start_min=preferred_start_min,
+            force_split=force_split,
+        )
 
 
 class CourseManagerWidget(QWidget):
-    """Widget for managing courses."""
-
-    HISTORY_FILE = Path.home() / ".sorth_course_history.json"
+    """Widget for managing courses to be scheduled."""
 
     def __init__(self):
         super().__init__()
-        self.courses = []
-        self.code_history = []
-        self.name_history = []
-        self.duration_history = []
-        self._load_history()
-        self.init_ui()
+        self.courses: list[Course] = []
+        self._init_ui()
 
-    def init_ui(self):
-        """Initialize the widget UI."""
+    def _init_ui(self):
         layout = QVBoxLayout()
 
-        # Instructions
-        instructions = QLabel(
-            "Gestión de Cursos\n\n"
-            "Agregue los cursos que desea programar. El tipo de sala (LAB/REGULAR) se detecta "
-            "automáticamente del código:\n"
-            "• Termina en 'L' o 'P' → LAB\n"
-            "• De lo contrario → REGULAR"
+        info = QLabel(
+            "Cursos a programar  —  "
+            "Cada curso puede tener múltiples grupos. "
+            "El tipo de sala se detecta automáticamente por el código (sufijo L/P → LAB)."
         )
-        instructions.setWordWrap(True)
-        instructions.setStyleSheet(
-            "background-color: #1967D2; "
-            "color: #FFFFFF; "
-            "padding: 15px; "
-            "border-radius: 5px; "
-            "font-weight: bold;"
+        info.setWordWrap(True)
+        info.setStyleSheet(
+            "background-color: #1967D2; color: #FFFFFF; "
+            "padding: 10px; border-radius: 4px; font-weight: bold;"
         )
-        layout.addWidget(instructions)
+        layout.addWidget(info)
 
         # Table
+        search_row = QHBoxLayout()
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("🔍  Buscar por código o nombre de curso...")
+        self._search.textChanged.connect(self._filter_table)
+        search_row.addWidget(self._search)
+        layout.addLayout(search_row)
+
         self.table = QTableWidget()
         self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels([
-            "Código", "Nombre", "Grupos", "Duración", "Aula Sugerida", "Día Preferido", "Hora Preferida"
+            "Código", "Nombre", "Grupos", "Duración", "Aula Sugerida",
+            "Día Preferido", "Hora Preferida"
         ])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout.addWidget(self.table)
 
         # Buttons
-        button_layout = QHBoxLayout()
-        
+        btn_layout = QHBoxLayout()
         btn_add = QPushButton("➕ Agregar Curso")
-        btn_add.clicked.connect(self.add_course)
-        
+        btn_add.setToolTip("Agregar un nuevo curso manualmente a la lista")
+        btn_add.clicked.connect(self._add_course)
         btn_edit = QPushButton("✏️ Editar")
-        btn_edit.clicked.connect(self.edit_course)
-        
+        btn_edit.setToolTip("Editar el curso seleccionado en la tabla")
+        btn_edit.clicked.connect(self._edit_course)
         btn_delete = QPushButton("🗑️ Eliminar")
-        btn_delete.clicked.connect(self.delete_course)
-        
+        btn_delete.setToolTip("Eliminar el curso seleccionado de la lista")
+        btn_delete.clicked.connect(self._delete_course)
         btn_clear = QPushButton("🧹 Limpiar Todo")
-        btn_clear.clicked.connect(self.clear_all)
-        
-        button_layout.addWidget(btn_add)
-        button_layout.addWidget(btn_edit)
-        button_layout.addWidget(btn_delete)
-        button_layout.addStretch()
-        button_layout.addWidget(btn_clear)
-        
-        layout.addLayout(button_layout)
+        btn_clear.setToolTip("Eliminar todos los cursos de la lista")
+        btn_clear.clicked.connect(self._clear_all)
+
+        btn_layout.addWidget(btn_add)
+        btn_layout.addWidget(btn_edit)
+        btn_layout.addWidget(btn_delete)
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_clear)
+        layout.addLayout(btn_layout)
 
         self.setLayout(layout)
 
-    def _load_history(self):
-        """Load available courses from config JSON."""
-        # Load available courses from config JSON only
-        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-            base_path = Path(sys._MEIPASS)
-            config_path = base_path / "data" / "input" / "courses_config.json"
-        else:
-            config_path = Path(__file__).parent.parent.parent / "data" / "input" / "courses_config.json"
-        if config_path.exists():
-            try:
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config_data = json.load(f)
-                    courses = config_data.get("courses", [])
-                    
-                    # Add course codes and names to suggestions
-                    for course in courses:
-                        code = course.get("code")
-                        name = course.get("name")
-                        
-                        if code:
-                            self.code_history.append(code)
-                        if name:
-                            self.name_history.append(name)
-            except Exception as e:
-                print(f"Error loading courses config: {e}")
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
-    def _save_history(self):
-        """Save course history to file."""
-        try:
-            history = {
-                "codes": self.code_history,
-                "names": self.name_history,
-                "durations": self.duration_history
-            }
-            with open(self.HISTORY_FILE, 'w', encoding='utf-8') as f:
-                json.dump(history, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"Error saving history: {e}")
+    def load_courses_from_excel(self, courses: list[Course]):
+        """Load courses imported from Excel, replacing current list."""
+        self.courses = list(courses)
+        self._search.clear()
+        self._refresh_table()
 
-    def add_course(self):
-        """Add a new course."""
-        dialog = CourseDialog(self, None, self.code_history, self.name_history, self.duration_history)
+    def get_courses(self) -> list[Course]:
+        return list(self.courses)
+
+    def edit_course_by_code(self, code: str):
+        """Open edit dialog for the course with the given code."""
+        for i, c in enumerate(self.courses):
+            if c.code == code:
+                self.table.setCurrentCell(i, 0)
+                dialog = CourseDialog(self, self.courses[i])
+                if dialog.exec():
+                    course = dialog.get_course()
+                    if course:
+                        self.courses[i] = course
+                        self._refresh_table()
+                return
+        QMessageBox.information(self, "Info",
+                                f"El curso {code} no se encuentra en la lista de cursos.")
+
+    # ------------------------------------------------------------------
+    # Button handlers
+    # ------------------------------------------------------------------
+
+    def _add_course(self):
+        dialog = CourseDialog(self)
         if dialog.exec():
-            course_data = dialog.get_course_data()
-            
-            if not course_data["code"]:
+            course = dialog.get_course()
+            if not course:
                 QMessageBox.warning(self, "Advertencia", "El código del curso es obligatorio.")
                 return
-            
-            # Check for duplicates
-            if any(c["code"] == course_data["code"] for c in self.courses):
-                QMessageBox.warning(
-                    self, 
-                    "Advertencia", 
-                    f"Ya existe un curso con el código {course_data['code']}"
-                )
+            if any(c.code == course.code for c in self.courses):
+                QMessageBox.warning(self, "Advertencia",
+                                    f"Ya existe un curso con el código {course.code}.")
                 return
-            
-            # Update history
-            if course_data["code"] and course_data["code"] not in self.code_history:
-                self.code_history.append(course_data["code"])
-            if course_data["name"] and course_data["name"] not in self.name_history:
-                self.name_history.append(course_data["name"])
-            if course_data["duration"] and course_data["duration"] not in self.duration_history:
-                self.duration_history.append(course_data["duration"])
-            self._save_history()
-            
-            self.courses.append(course_data)
-            self.refresh_table()
+            self.courses.append(course)
+            self._refresh_table()
 
-    def edit_course(self):
-        """Edit the selected course."""
-        selected = self.table.currentRow()
-        if selected < 0:
-            QMessageBox.warning(self, "Advertencia", "Por favor seleccione un curso para editar.")
+    def _edit_course(self):
+        row = self.table.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "Advertencia", "Seleccione un curso para editar.")
             return
-
-        dialog = CourseDialog(self, self.courses[selected], self.code_history, self.name_history, self.duration_history)
+        dialog = CourseDialog(self, self.courses[row])
         if dialog.exec():
-            course_data = dialog.get_course_data()
-            
-            if not course_data["code"]:
+            course = dialog.get_course()
+            if not course:
                 QMessageBox.warning(self, "Advertencia", "El código del curso es obligatorio.")
                 return
-            
-            # Update history
-            if course_data["code"] and course_data["code"] not in self.code_history:
-                self.code_history.append(course_data["code"])
-            if course_data["name"] and course_data["name"] not in self.name_history:
-                self.name_history.append(course_data["name"])
-            if course_data["duration"] and course_data["duration"] not in self.duration_history:
-                self.duration_history.append(course_data["duration"])
-            self._save_history()
-            
-            self.courses[selected] = course_data
-            self.refresh_table()
+            self.courses[row] = course
+            self._refresh_table()
 
-    def delete_course(self):
-        """Delete the selected course."""
-        selected = self.table.currentRow()
-        if selected < 0:
-            QMessageBox.warning(self, "Advertencia", "Por favor seleccione un curso para eliminar.")
+    def _delete_course(self):
+        row = self.table.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "Advertencia", "Seleccione un curso para eliminar.")
             return
+        if _confirm(self, "Confirmar eliminación",
+                    f"¿Eliminar el curso {self.courses[row].code}?"):
+            del self.courses[row]
+            self._refresh_table()
 
-        reply = QMessageBox.question(
-            self,
-            "Confirmar eliminación",
-            f"¿Está seguro de eliminar el curso {self.courses[selected]['code']}?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
-            del self.courses[selected]
-            self.refresh_table()
-
-    def clear_all(self):
-        """Clear all courses."""
+    def _clear_all(self):
         if not self.courses:
             return
-
-        reply = QMessageBox.question(
-            self,
-            "Confirmar limpieza",
-            "¿Está seguro de eliminar todos los cursos?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
+        if _confirm(self, "Confirmar", "¿Eliminar todos los cursos de la lista?"):
             self.courses.clear()
-            self.refresh_table()
+            self._refresh_table()
 
-    def refresh_table(self):
-        """Refresh the table display."""
+    # ------------------------------------------------------------------
+    # Table rendering
+    # ------------------------------------------------------------------
+
+    def _refresh_table(self):
         self.table.setRowCount(len(self.courses))
-        
-        for i, course in enumerate(self.courses):
-            self.table.setItem(i, 0, QTableWidgetItem(course["code"]))
-            self.table.setItem(i, 1, QTableWidgetItem(course.get("name", "") or ""))
-            self.table.setItem(i, 2, QTableWidgetItem(str(course["number_of_groups"])))
-            self.table.setItem(i, 3, QTableWidgetItem(f"{course['duration']} bloques"))
-            self.table.setItem(i, 4, QTableWidgetItem(course.get("suggested_classroom", "") or ""))
-            self.table.setItem(i, 5, QTableWidgetItem(course.get("preferred_day", "") or "-"))
-            
-            # Format preferred hour
-            preferred_hour = course.get("preferred_hour")
-            hour_text = f"{preferred_hour}:00" if preferred_hour else "-"
-            self.table.setItem(i, 6, QTableWidgetItem(hour_text))
+        for i, c in enumerate(self.courses):
+            h, m = divmod(c.duration_min, 60)
+            dur_text = f"{h}h {m:02d}min" if m else f"{h}h"
 
-    def get_courses(self):
-        """Get the list of courses."""
-        return self.courses.copy()
+            pref_time = "—"
+            if c.preferred_start_min is not None:
+                pref_time = TimeModel.minutes_to_hhmm(c.preferred_start_min)
+
+            self.table.setItem(i, 0, QTableWidgetItem(c.code))
+            self.table.setItem(i, 1, QTableWidgetItem(c.name or ""))
+            self.table.setItem(i, 2, QTableWidgetItem(str(c.number_of_groups)))
+            self.table.setItem(i, 3, QTableWidgetItem(dur_text))
+            self.table.setItem(i, 4, QTableWidgetItem(c.suggested_classroom or "—"))
+            self.table.setItem(i, 5, QTableWidgetItem(c.preferred_day or "—"))
+            self.table.setItem(i, 6, QTableWidgetItem(pref_time))
+
+        self._filter_table(self._search.text())
+
+    def _filter_table(self, text: str):
+        text = text.strip().lower()
+        for row in range(self.table.rowCount()):
+            code = self.table.item(row, 0)
+            name = self.table.item(row, 1)
+            match = (
+                (code and text in code.text().lower()) or
+                (name and text in name.text().lower())
+            )
+            self.table.setRowHidden(row, not match if text else False)

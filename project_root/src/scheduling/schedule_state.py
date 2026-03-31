@@ -20,9 +20,6 @@ class ScheduleState:
         classroom = self.classrooms[classroom_name]
         end_min = start_min + group.duration_min
 
-        if classroom.room_type != group.required_room_type:
-            return False
-
         if classroom.capacity < group.size:
             return False
 

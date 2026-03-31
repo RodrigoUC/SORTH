@@ -38,6 +38,30 @@ def main():
     app.setApplicationName("SORTH")
     app.setOrganizationName("SORTH")
 
+    app.setStyleSheet("""
+        * { font-size: 10pt; }
+        QHeaderView::section { font-size: 10pt; font-weight: bold; }
+        QTabBar::tab {
+            font-size: 10pt;
+            padding: 8px 16px;
+            color: #555555;
+            background-color: #E0E0E0;
+            border: 1px solid #BDBDBD;
+            border-bottom: none;
+            margin-right: 2px;
+        }
+        QTabBar::tab:selected {
+            background-color: #1967D2;
+            color: #FFFFFF;
+            font-weight: bold;
+            border-color: #1967D2;
+        }
+        QTabBar::tab:hover:!selected {
+            background-color: #BBDEFB;
+            color: #1B1B1B;
+        }
+    """)
+
     icon_path = _resolve_icon_path()
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))

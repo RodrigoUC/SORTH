@@ -4,7 +4,7 @@ class TimeModel:
 
     # Default operating hours in minutes from midnight
     DEFAULT_DAY_START = 7 * 60    # 07:00 = 420
-    DEFAULT_DAY_END   = 21 * 60   # 21:00 = 1260
+    DEFAULT_DAY_END   = 22 * 60   # 22:00 = 1320
 
     # Lunch block to avoid
     LUNCH_START = 12 * 60         # 12:00 = 720
@@ -49,23 +49,39 @@ class TimeModel:
         """
         Generate valid start times (in minutes) for a given duration.
 
-        - If preferred_start_min is set: use 5-min step around the full day
-          but only return the exact preferred start (caller handles ordering).
-        - If no preference: use 30-min step to keep domain manageable.
+        - If preferred_start_min is set: search ±30 min around preference with 5-min step.
+        - If no preference: use 30-min step across full day.
 
         Returns list of start_min values where [start, start+duration] fits
         within operating hours and does not overlap lunch.
         """
-        step = self.STEP_WITH_PREFERENCE if preferred_start_min is not None \
-               else self.STEP_WITHOUT_PREFERENCE
-
         candidates = []
-        t = self.day_start
-        while t + duration_min <= self.day_end:
-            end = t + duration_min
-            if not self.overlaps_lunch(t, end):
-                candidates.append(t)
-            t += step
+
+        if preferred_start_min is not None:
+            search_start = max(self.day_start, preferred_start_min - 30)
+            search_end   = min(self.day_end,   preferred_start_min + 30)
+            t = search_start
+            while t <= search_end:
+                if t + duration_min <= self.day_end:
+                    end = t + duration_min
+                    if not self.overlaps_lunch(t, end):
+                        candidates.append(t)
+                t += self.STEP_WITH_PREFERENCE
+            # Fallback: if preference window yields nothing, search full day
+            if not candidates:
+                t = self.day_start
+                while t + duration_min <= self.day_end:
+                    end = t + duration_min
+                    if not self.overlaps_lunch(t, end):
+                        candidates.append(t)
+                    t += self.STEP_WITHOUT_PREFERENCE
+        else:
+            t = self.day_start
+            while t + duration_min <= self.day_end:
+                end = t + duration_min
+                if not self.overlaps_lunch(t, end):
+                    candidates.append(t)
+                t += self.STEP_WITHOUT_PREFERENCE
 
         return candidates
 

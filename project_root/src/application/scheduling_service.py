@@ -3,60 +3,73 @@
 from ..scheduling.time_model import TimeModel
 from ..scheduling.schedule_state import ScheduleState
 from ..scheduling.scheduler import Scheduler
+from ..scheduling.course import Course
 from ..infrastructure.excel_reader import ExcelReader
-from ..infrastructure.course_config_reader import CourseConfigReader
 
 
 class SchedulingService:
 
-    def __init__(self, excel_path: str, course_config_path: str, seed: int | None = 42):
-        """
-        Initialize the scheduling service.
-        
-        Args:
-            excel_path: Path to Excel file containing classrooms and availability
-            course_config_path: Path to JSON file containing course configuration
-            seed: Random seed for scheduler (None for random, int for reproducible)
-        """
+    def __init__(self, excel_path: str, seed: int | None = 42):
         self.excel_path = excel_path
-        self.course_config_path = course_config_path
         self.seed = seed
 
-    def run(self):
-        # 1. Load infrastructure data
-        excel_reader = ExcelReader(self.excel_path)
-        course_reader = CourseConfigReader(self.course_config_path)
+    def run(self, courses: list[Course] | None = None,
+            classroom_restrictions: dict[str, set[str]] | None = None,
+            classrooms: dict | None = None):
+        """
+        Run the scheduling algorithm.
 
-        classrooms = excel_reader.load_classrooms()
-        availability = excel_reader.load_availability()
-        courses = course_reader.load_courses()
+        Args:
+            courses: List of Course objects. If None, loads from Excel.
+            classroom_restrictions: {classroom_name: {course_codes}} to apply
+                                    restricted classrooms. If None, no restrictions.
+            classrooms: Pre-built classrooms dict. If None, loads from Excel.
 
-        # 2. Build domain model
-        time_model = TimeModel.from_availability(availability)
+        Returns:
+            (assignments, groups) on success, (None, None) on failure.
+        """
+        reader = ExcelReader(self.excel_path)
 
-        schedule_state = ScheduleState(
+        # 1. Load classrooms (use provided or load from Excel)
+        if classrooms is None:
+            classrooms = reader.load_classrooms()
+        else:
+            classrooms = dict(classrooms)  # shallow copy to avoid mutating caller's dict
+
+        # Reset occupancy AND restrictions so re-runs start from a clean state
+        for cls in classrooms.values():
+            cls.occupancy.clear()
+            cls.allowed_courses = None
+
+        # 2. Apply classroom restrictions if provided
+        if classroom_restrictions:
+            for classroom_name, allowed_codes in classroom_restrictions.items():
+                if classroom_name in classrooms:
+                    classrooms[classroom_name].set_allowed_courses(allowed_codes)
+
+        # 3. Load courses from Excel if not provided externally
+        if courses is None:
+            courses = reader.load_courses()
+
+        # 4. Build TimeModel (default 07:00-22:00, all 6 days)
+        time_model = TimeModel.default()
+
+        # 5. Build ScheduleState
+        state = ScheduleState(
             time_model=time_model,
-            classrooms=list(classrooms.values())
+            classrooms=list(classrooms.values()),
         )
 
-        for (classroom_name, day, hour), available in availability.items():
-            if available:
-                continue
-
-            day_i, block_i = time_model.to_internal(day, hour)
-            if classroom_name in schedule_state.classrooms:
-                schedule_state.classrooms[classroom_name].occupy(day_i, block_i, 1)
-
+        # 6. Generate groups from courses
         groups = []
         for course in courses:
             groups.extend(course.generate_groups())
 
-        # 3. Run scheduler con seed
+        # 7. Run scheduler
         scheduler = Scheduler(seed=self.seed)
-        success = scheduler.schedule(schedule_state, groups)
+        success = scheduler.schedule(state, groups)
 
-        # 4. Return result (assignments and groups for duration info)
-        if success:
-            return schedule_state.assignments, groups
-        else:
-            return None, None
+        # Return schedule even if partial (greedy may leave some groups unassigned)
+        if state.assignments:
+            return state.assignments, groups
+        return None, None
