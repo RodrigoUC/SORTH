@@ -16,6 +16,7 @@ from .schedule_viewer_widget import ScheduleViewerWidget
 from ..application.scheduling_service import SchedulingService
 from ..infrastructure.excel_reader import ExcelReader
 from ..infrastructure.schedule_exporter import ScheduleExporter
+from ..infrastructure.session_repository import SessionRepository
 from ..scheduling.time_model import TimeModel
 from ..scheduling.classroom import Classroom
 
@@ -293,9 +294,11 @@ class MainWindow(QMainWindow):
         self.current_groups: list | None = None
         self.classroom_restrictions: dict[str, set[str]] = {}
         self._classroom_course_map: dict[str, list[str]] = {}
-        self._classrooms: dict[str, Classroom] = {}  # all known classrooms
+        self._classrooms: dict[str, Classroom] = {}
+        self._repo = SessionRepository()
 
         self._init_ui()
+        self._restore_session_if_exists()
 
     def _init_ui(self):
         self.setWindowTitle("SORTH - Sistema de Organización de Horarios")
@@ -309,14 +312,16 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(self._create_file_section())
 
         self.tabs = QTabWidget()
-        self.course_manager = CourseManagerWidget()
+        self.course_manager = CourseManagerWidget(repo=self._repo)
         self.tabs.addTab(self.course_manager, "📚 Gestión de Cursos")
         self.tabs.setTabToolTip(0, "Ver, agregar, editar y eliminar los cursos a programar")
+        self.course_manager.courses_changed.connect(self._save_session)
         self.schedule_viewer = ScheduleViewerWidget()
         self.tabs.addTab(self.schedule_viewer, "📅 Horario Generado")
         self.tabs.setTabToolTip(1, "Visualizar el horario generado en lista, cuadrícula o por aula")
         self.schedule_viewer.edit_course_requested.connect(self._edit_course_from_viewer)
         self.schedule_viewer.group_removed.connect(self._on_group_removed)
+        self.schedule_viewer.schedule_cleared.connect(self._on_schedule_cleared)
         main_layout.addWidget(self.tabs)
 
         main_layout.addLayout(self._create_actions_section())
@@ -394,9 +399,9 @@ class MainWindow(QMainWindow):
         self.btn_restrictions.clicked.connect(self._configure_restrictions)
         self.btn_restrictions.setEnabled(False)
         self.btn_restrictions.setStyleSheet(
-            "QPushButton { background-color: #E65100; color: white; "
+            "QPushButton { background-color: #BF360C; color: white; "
             "padding: 8px 15px; border-radius: 3px; font-weight: bold; }"
-            "QPushButton:hover { background-color: #BF360C; }"
+            "QPushButton:hover { background-color: #8D2000; }"
             "QPushButton:disabled { background-color: #cccccc; color: #666666; }"
         )
 
@@ -438,9 +443,9 @@ class MainWindow(QMainWindow):
         self.btn_generate.clicked.connect(self._generate_schedule)
         self.btn_generate.setEnabled(False)
         self.btn_generate.setStyleSheet(
-            "QPushButton { background-color: #4CAF50; color: white; "
+            "QPushButton { background-color: #2E7D32; color: white; "
             "padding: 10px; font-size: 14px; font-weight: bold; border-radius: 5px; }"
-            "QPushButton:hover { background-color: #45a049; }"
+            "QPushButton:hover { background-color: #1B5E20; }"
             "QPushButton:disabled { background-color: #cccccc; color: #666666; }"
         )
 
@@ -498,6 +503,7 @@ class MainWindow(QMainWindow):
                 f"✅ Excel cargado: {Path(file_path).name}  "
                 f"({len(classrooms)} aulas, {len(courses)} cursos)"
             )
+            self._save_session()
 
         except Exception as e:
             QMessageBox.critical(self, "Error",
@@ -519,6 +525,7 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(
             f"✅ Aula '{classroom.name}' agregada ({classroom.room_type}, cap={classroom.capacity})"
         )
+        self._save_session()
 
     def _configure_restrictions(self):
         if not self._classroom_course_map:
@@ -542,6 +549,7 @@ class MainWindow(QMainWindow):
             else:
                 self.btn_restrictions.setText("🔒 Aulas con Restricciones")
                 self.status_bar.showMessage("Restricciones de aulas eliminadas.")
+            self._save_session()
 
     def _generate_schedule(self):
         if not self.excel_path:
@@ -605,6 +613,7 @@ class MainWindow(QMainWindow):
 
             self.status_bar.showMessage(f"✅ Horario generado: {assigned}/{total} grupos")
             _InfoDialog(self, "Horario generado", "\n".join(lines)).exec()
+            self._save_session()
         else:
             self.status_bar.showMessage("❌ No se pudo generar el horario")
             dlg = _InfoDialog(
@@ -658,6 +667,115 @@ class MainWindow(QMainWindow):
         except Exception as e:
             _InfoDialog(self, "Error", f"Error al exportar:\n{str(e)}", warning=True).exec()
 
+    # ------------------------------------------------------------------
+    # Session persistence
+    # ------------------------------------------------------------------
+
+    def _save_session(self):
+        try:
+            seed = None if self.chk_random_seed.isChecked() else self.seed_input.value()
+            self._repo.save_session(
+                excel_path=self.excel_path,
+                seed=seed,
+                classrooms=self._classrooms,
+                courses=self.course_manager.get_courses(),
+                restrictions=self.classroom_restrictions,
+                assignments=self.current_schedule,
+            )
+        except Exception:
+            pass  # persistence errors must never crash the app
+
+    def _restore_session_if_exists(self):
+        if not self._repo.has_session():
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Sesión anterior")
+        dlg.setModal(True)
+        dlg.setMinimumWidth(500)
+        outer = QVBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        hdr = QLabel("  💾  Sesión anterior encontrada")
+        hdr.setStyleSheet(
+            "background-color: #1967D2; color: #FFFFFF; "
+            "font-size: 12pt; font-weight: bold; padding: 14px 20px;"
+        )
+        outer.addWidget(hdr)
+        body = QWidget()
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(28, 20, 28, 20)
+        bl.setSpacing(20)
+        lbl = QLabel("Se encontró una sesión guardada.\n¿Deseas restaurarla?")
+        lbl.setStyleSheet("font-size: 11pt;")
+        lbl.setMinimumWidth(440)
+        bl.addWidget(lbl)
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No
+        )
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        bl.addWidget(btns)
+        outer.addWidget(body)
+        dlg.setLayout(outer)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return  # user said No — app starts normally with empty state
+        try:
+            data = self._repo.load_session()
+            if not data:
+                return
+
+            self._classrooms = data["classrooms"]
+            self.classroom_restrictions = data["restrictions"]
+
+            if data["excel_path"] and Path(data["excel_path"]).exists():
+                self.excel_path = data["excel_path"]
+                self.excel_path_label.setText(Path(data["excel_path"]).name)
+                self.excel_path_label.setStyleSheet("color: green;")
+                # Reload classroom-course map from Excel for restrictions dialog
+                try:
+                    from ..infrastructure.excel_reader import ExcelReader as _ER
+                    r = _ER(data["excel_path"])
+                    self._classroom_course_map = r.load_course_classroom_map(
+                        known_classrooms=set(self._classrooms.keys())
+                    )
+                except Exception:
+                    pass
+
+            self.course_manager.load_courses_from_excel(data["courses"])
+
+            if data["seed"] is not None:
+                self.seed_input.setValue(data["seed"])
+
+            count = len(self.classroom_restrictions)
+            if count:
+                self.btn_restrictions.setText(f"🔒 Restricciones ({count})")
+            self.btn_restrictions.setEnabled(bool(self._classroom_course_map))
+            self.btn_generate.setEnabled(bool(data["courses"]))
+
+            if data["assignments"]:
+                self.current_schedule = data["assignments"]
+                time_model = TimeModel.default()
+                course_name_map = {c.code: c.name for c in data["courses"] if c.name}
+                # Regenerate groups so the viewer has full group info
+                groups = []
+                for c in data["courses"]:
+                    groups.extend(c.generate_groups())
+                # Re-attach assignments to groups
+                for g in groups:
+                    if g.group_id in data["assignments"]:
+                        g.assignment = data["assignments"][g.group_id]
+                self.current_groups = groups
+                self.schedule_viewer.display_schedule(
+                    data["assignments"], time_model, groups, course_name_map
+                )
+                self.btn_export.setEnabled(True)
+
+            self.status_bar.showMessage("✅ Sesión restaurada correctamente.")
+        except Exception as e:
+            self.status_bar.showMessage(f"⚠️ No se pudo restaurar la sesión: {e}")
+
     def _edit_course_from_viewer(self, course_code: str):
         """Open CourseDialog for the given course code from the schedule viewer."""
         self.tabs.setCurrentIndex(0)
@@ -669,9 +787,14 @@ class MainWindow(QMainWindow):
         if self.current_groups:
             for g in self.current_groups:
                 if g.group_id == gid and g.is_assigned():
-                    from ..scheduling.schedule_state import ScheduleState
-                    # Just clear the assignment reference
                     g.assignment = None
+
+    def _on_schedule_cleared(self):
+        self.current_schedule = None
+        self.current_groups = None
+        self.btn_export.setEnabled(False)
+        self.status_bar.showMessage("Horario eliminado.")
+        self._save_session()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -702,7 +825,7 @@ class _InfoDialog(QDialog):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        header_color = "#C62828" if warning else "#1967D2"
+        header_color = "#8D2000" if warning else "#1967D2"
         icon = "\u26a0\ufe0f" if warning else "\u2705"
         header = QLabel(f"  {icon}  {title}")
         header.setStyleSheet(

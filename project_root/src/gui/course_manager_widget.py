@@ -5,7 +5,8 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLineEdit, QSpinBox, QComboBox, QFormLayout,
                              QDialogButtonBox, QMessageBox, QHeaderView, QCheckBox,
                              QTimeEdit)
-from PyQt6.QtCore import Qt, QTime
+from PyQt6.QtCore import Qt, QTime, pyqtSignal
+from PyQt6.QtWidgets import QCompleter
 
 from ..scheduling.course import Course
 from ..scheduling.time_model import TimeModel
@@ -24,7 +25,7 @@ def _confirm(parent, title: str, message: str) -> bool:
 
     header = QLabel(f"  ⚠️  {title}")
     header.setStyleSheet(
-        "background-color: #E65100; color: #FFFFFF; "
+        "background-color: #BF360C; color: #FFFFFF; "
         "font-size: 12pt; font-weight: bold; padding: 14px 20px;"
     )
     outer.addWidget(header)
@@ -56,12 +57,15 @@ class CourseDialog(QDialog):
 
     DAYS = ["(Sin preferencia)", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 
-    def __init__(self, parent=None, course: Course = None):
+    def __init__(self, parent=None, course: Course = None,
+                 completions: list[tuple[str, str]] | None = None):
         super().__init__(parent)
         self.course = course
+        self._completions = completions or []   # [(code, name), ...]
+        self._code_to_name = {c: n for c, n in self._completions}
         self.setWindowTitle("Agregar Curso" if not course else "Editar Curso")
         self.setModal(True)
-        self.resize(460, 380)
+        self.resize(460, 420)
         self._init_ui()
 
     def _init_ui(self):
@@ -71,11 +75,22 @@ class CourseDialog(QDialog):
         self.code_edit = QLineEdit()
         self.code_edit.setPlaceholderText("Ej: BIJ400, BIJ400L")
         self.code_edit.textChanged.connect(self._update_room_type_label)
+        self.code_edit.textChanged.connect(self._autofill_name)
+        if self._completions:
+            code_completer = QCompleter([c for c, _ in self._completions])
+            code_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            code_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+            self.code_edit.setCompleter(code_completer)
         layout.addRow("Código del Curso:", self.code_edit)
 
         # Name
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("Ej: Biología General (opcional)")
+        if self._completions:
+            name_completer = QCompleter([n for _, n in self._completions if n])
+            name_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            name_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+            self.name_edit.setCompleter(name_completer)
         layout.addRow("Nombre:", self.name_edit)
 
         # Number of groups
@@ -185,6 +200,12 @@ class CourseDialog(QDialog):
         self._update_room_type_label()
         self._toggle_pref_time(self.chk_pref_time.isChecked())
 
+    def _autofill_name(self, code: str):
+        """Auto-fill name when code matches a known course exactly."""
+        name = self._code_to_name.get(code.strip())
+        if name and not self.name_edit.text():
+            self.name_edit.setText(name)
+
     def _update_room_type_label(self):
         code = self.code_edit.text().strip().upper()
         if code.endswith("L") or code.endswith("P"):
@@ -239,9 +260,12 @@ class CourseDialog(QDialog):
 class CourseManagerWidget(QWidget):
     """Widget for managing courses to be scheduled."""
 
-    def __init__(self):
+    courses_changed = pyqtSignal()  # emitted after any add/edit/delete/clear/load
+
+    def __init__(self, repo=None):
         super().__init__()
         self.courses: list[Course] = []
+        self._repo = repo  # SessionRepository, optional
         self._init_ui()
 
     def _init_ui(self):
@@ -276,6 +300,7 @@ class CourseManagerWidget(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSortingEnabled(True)
         layout.addWidget(self.table)
 
         # Buttons
@@ -311,6 +336,7 @@ class CourseManagerWidget(QWidget):
         self.courses = list(courses)
         self._search.clear()
         self._refresh_table()
+        self.courses_changed.emit()
 
     def get_courses(self) -> list[Course]:
         return list(self.courses)
@@ -320,12 +346,13 @@ class CourseManagerWidget(QWidget):
         for i, c in enumerate(self.courses):
             if c.code == code:
                 self.table.setCurrentCell(i, 0)
-                dialog = CourseDialog(self, self.courses[i])
+                dialog = CourseDialog(self, self.courses[i], completions=self._get_completions())
                 if dialog.exec():
                     course = dialog.get_course()
                     if course:
                         self.courses[i] = course
                         self._refresh_table()
+                        self.courses_changed.emit()
                 return
         QMessageBox.information(self, "Info",
                                 f"El curso {code} no se encuentra en la lista de cursos.")
@@ -334,26 +361,45 @@ class CourseManagerWidget(QWidget):
     # Button handlers
     # ------------------------------------------------------------------
 
+    def _get_completions(self) -> list[tuple[str, str]]:
+        if self._repo:
+            try:
+                return self._repo.get_course_completions()
+            except Exception:
+                pass
+        return []
+
     def _add_course(self):
-        dialog = CourseDialog(self)
+        dialog = CourseDialog(self, completions=self._get_completions())
         if dialog.exec():
             course = dialog.get_course()
             if not course:
                 QMessageBox.warning(self, "Advertencia", "El código del curso es obligatorio.")
                 return
-            if any(c.code == course.code for c in self.courses):
-                QMessageBox.warning(self, "Advertencia",
-                                    f"Ya existe un curso con el código {course.code}.")
+            existing = next((i for i, c in enumerate(self.courses) if c.code == course.code), None)
+            if existing is not None:
+                if _confirm(self, "Curso ya existe",
+                            f"El curso '{course.code}' ya existe en la lista.\n"
+                            f"¿Deseas modificarlo en su lugar?"):
+                    edit_dlg = CourseDialog(self, self.courses[existing],
+                                           completions=self._get_completions())
+                    if edit_dlg.exec():
+                        updated = edit_dlg.get_course()
+                        if updated:
+                            self.courses[existing] = updated
+                            self._refresh_table()
+                            self.courses_changed.emit()
                 return
             self.courses.append(course)
             self._refresh_table()
+            self.courses_changed.emit()
 
     def _edit_course(self):
         row = self.table.currentRow()
         if row < 0:
             QMessageBox.warning(self, "Advertencia", "Seleccione un curso para editar.")
             return
-        dialog = CourseDialog(self, self.courses[row])
+        dialog = CourseDialog(self, self.courses[row], completions=self._get_completions())
         if dialog.exec():
             course = dialog.get_course()
             if not course:
@@ -361,6 +407,7 @@ class CourseManagerWidget(QWidget):
                 return
             self.courses[row] = course
             self._refresh_table()
+            self.courses_changed.emit()
 
     def _delete_course(self):
         row = self.table.currentRow()
@@ -371,13 +418,15 @@ class CourseManagerWidget(QWidget):
                     f"¿Eliminar el curso {self.courses[row].code}?"):
             del self.courses[row]
             self._refresh_table()
+            self.courses_changed.emit()
 
     def _clear_all(self):
         if not self.courses:
             return
-        if _confirm(self, "Confirmar", "¿Eliminar todos los cursos de la lista?"):
+        if _confirm(self, "Confirmar", "¿Eliminar todos los cursos de la lista?\nEsta acción no se puede deshacer."):
             self.courses.clear()
             self._refresh_table()
+            self.courses_changed.emit()
 
     # ------------------------------------------------------------------
     # Table rendering

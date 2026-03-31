@@ -1,5 +1,8 @@
 # SORTH - Sistema de Organización de Horarios
 
+## Repositorio de GITHUB
+https://github.com/RodrigoUC/SORTH
+
 ## Descripción
 
 SORTH es una aplicación de escritorio con interfaz gráfica para la generación automática de horarios académicos. Utiliza un **algoritmo Greedy con reintentos** y contadores incrementales para asignar grupos de cursos a aulas disponibles en tiempo real, respetando restricciones de capacidad, tipo de sala, horarios preferidos y aulas reservadas.
@@ -91,8 +94,9 @@ src/
 ├── application/
 │   └── scheduling_service.py  # Orquestador: carga datos, ejecuta scheduler
 ├── infrastructure/
-│   ├── excel_reader.py      # Lee hojas Aulas y Cursos del Excel
-│   └── schedule_exporter.py # Exporta a Excel (grilla visual) / CSV
+│   ├── excel_reader.py        # Lee hojas Aulas y Cursos del Excel
+│   ├── session_repository.py  # Persistencia SQLite de la sesión activa
+│   └── schedule_exporter.py   # Exporta a Excel (grilla visual) / CSV
 └── gui/
     ├── main_window.py           # Ventana principal + QThread worker
     ├── course_manager_widget.py # Gestión de cursos con búsqueda
@@ -309,6 +313,12 @@ project_root/
 - Resetea `occupancy` y `allowed_courses` al inicio de cada run
 - `TimeModel` con `DAY_END = 22 * 60`
 
+#### Persistencia (`src/infrastructure/session_repository.py`)
+- **SQLite** (`data/sorth_session.db`): almacena aulas, cursos con sugerencias por grupo, restricciones, asignaciones y metadatos (ruta Excel, semilla)
+- **Esquema relacional**: tablas `session`, `classrooms`, `courses`, `course_group_suggestions`, `restrictions`, `assignments`
+- **Guardado automático**: se invoca tras cada acción relevante (cargar Excel, editar cursos, generar horario, eliminar grupo)
+- **Restauración al inicio**: si existe sesión guardada con cursos, se ofrece restaurarla mediante diálogo al abrir la aplicación
+
 #### GUI
 - **`QThread` worker**: scheduler en hilo separado, barra de progreso indeterminada
 - **Diálogos con header coloreado**: reemplazan `QMessageBox` en toda la app
@@ -340,6 +350,7 @@ project_root/
 - **PyQt6**: Interfaz gráfica
 - **pandas**: Procesamiento de datos
 - **openpyxl**: Lectura/escritura de Excel
+- **sqlite3** (stdlib): Persistencia de sesión
 - **PyInstaller**: Empaquetado como `.exe`
 - **pytest**: Testing
 

@@ -1,5 +1,8 @@
 # SORTH - Sistema de Organización de Horarios
 
+## Repositorio de GITHUB
+https://github.com/RodrigoUC/SORTH
+
 ## Descripción del Proyecto
 
 SORTH es una aplicación de escritorio especializada en la generación automática de horarios académicos. El sistema resuelve el problema de asignación de cursos a aulas y bloques horarios utilizando técnicas avanzadas de optimización combinatoria, permitiendo automatizar un proceso que tradicionalmente requiere intervención manual y es propenso a conflictos de programación.
@@ -28,6 +31,7 @@ SORTH implementa un **algoritmo Greedy con reintentos** y heurísticas inteligen
 - **Horario máximo 22:00** — soporta cursos nocturnos que terminan después de las 21:00
 - **Split automático de sesiones largas** — cursos > 270 min se dividen en bloques de 120 min con chunk mínimo de 60 min. El usuario puede forzar o desactivar el split por curso desde la GUI
 - **Generación reproducible** — semilla configurable para resultados deterministas
+- **Persistencia de sesión** — la sesión activa (cursos, aulas, restricciones y horario generado) se guarda automáticamente en SQLite (`data/sorth_session.db`) y se ofrece restaurar al abrir la aplicación
 - **Exportación** en Excel (grilla visual por aula con colores por curso) y CSV
 
 ## Formato del Excel de Entrada
@@ -66,6 +70,7 @@ El sistema lee un único archivo Excel con dos hojas:
 - **PyQt6**: Framework para interfaz gráfica de escritorio
 - **pandas**: Procesamiento y manipulación de datos
 - **openpyxl**: Lectura y escritura de archivos Excel
+- **sqlite3** (stdlib): Persistencia de sesión
 - **PyInstaller**: Empaquetado como ejecutable de Windows
 - **pytest**: Framework de testing
 
@@ -76,7 +81,7 @@ El proyecto sigue una arquitectura en capas:
 - **Presentation Layer** (`src/gui/`): Interfaz gráfica PyQt6 con gestión de cursos y visualización de horarios
 - **Application Layer** (`src/application/`): Servicios de orquestación y lógica de negocio
 - **Domain Layer** (`src/scheduling/`): Algoritmo Greedy, modelo de intervalos, representación de cursos y aulas
-- **Infrastructure Layer** (`src/infrastructure/`): Lectura de Excel, exportación de resultados
+- **Infrastructure Layer** (`src/infrastructure/`): Lectura de Excel, exportación de resultados, persistencia SQLite de sesión
 
 ## Flujo de Operación
 
@@ -107,7 +112,11 @@ El sistema se empaqueta como ejecutable standalone (`SORTH.exe`) para Windows, i
 - **Umbral de split aumentado a 270 min**: sesiones de hasta 4.5h se asignan como bloque único. Chunk mínimo de 60 min para evitar fragmentos inútiles
 - **Fallback en generación de candidatos**: si la ventana ±30 min alrededor de la preferencia no produce candidatos (ej: solapamiento con almuerzo), se usa el día completo con paso de 30 min
 
-#### Lectura de Excel
+#### Infraestructura
+- **Persistencia SQLite** (`src/infrastructure/session_repository.py`): reemplaza cualquier mecanismo anterior. La sesión completa (aulas, cursos con sugerencias por grupo, restricciones, asignaciones y metadatos) se guarda en `data/sorth_session.db`
+- **Esquema relacional**: tablas `session`, `classrooms`, `courses`, `course_group_suggestions`, `restrictions`, `assignments`
+- **Guardado automático**: se invoca tras cada acción relevante (cargar Excel, editar cursos, generar horario, eliminar grupo)
+- **Restauración al inicio**: si existe sesión guardada con cursos, se ofrece restaurarla mediante diálogo al abrir la aplicación
 - Aulas referenciadas en `Cursos` que no existen en la hoja `Aulas` se ignoran silenciosamente (tratadas como sin preferencia de aula)
 - `load_course_classroom_map()` filtra correctamente con `known_classrooms`
 - Sugerencias por grupo preservadas individualmente en `group_suggestions`

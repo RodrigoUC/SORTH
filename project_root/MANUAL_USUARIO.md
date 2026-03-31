@@ -190,7 +190,24 @@ Haz clic en **📊 Ver Resumen** para ver:
 
 ---
 
-## 7. Problemas frecuentes
+## 9. Persistencia de datos
+
+SORTH guarda automáticamente la sesión activa en una base de datos local (`data/sorth_session.db`) cada vez que realizas una acción relevante: cargar un Excel, editar cursos, generar el horario o eliminar un grupo.
+
+Al abrir la aplicación, si existe una sesión guardada, aparece un diálogo preguntando si deseas restaurarla. Al aceptar, se recuperan:
+- Los cursos y sus configuraciones.
+- Las aulas (incluyendo las agregadas manualmente).
+- Las restricciones de aulas configuradas.
+- El horario generado (si existía al cerrar).
+- La ruta del Excel y el valor de semilla.
+
+Si seleccionas **No**, la aplicación inicia con el estado vacío sin borrar la sesión guardada.
+
+> La sesión se guarda localmente en el equipo. No se envía ningún dato a servicios externos.
+
+---
+
+## 10. Problemas frecuentes
 
 ### No se pudo generar un horario válido
 **Causas posibles:**
@@ -220,16 +237,21 @@ Aparecen en rojo en la Lista Detallada. Causas:
 
 ---
 
-## 8. Recomendaciones
+## 11. Recomendaciones
 
 - Cargar el Excel antes de agregar cursos manualmente para no perder los datos importados.
 - Usar semilla fija para resultados reproducibles; cambiar la semilla si el resultado no es satisfactorio.
 - Configurar las restricciones de aulas **antes** de generar el horario.
-- Exportar el resultado antes de cerrar la aplicación — los cambios no se guardan automáticamente.
+- Exportar el resultado si se necesita compartirlo o archivarlo — el Excel exportado es el formato definitivo.
 - Mantener una copia de respaldo del Excel original.
 
 ---
 
-## 9. Cierre
+## 12. Cierre
 
-Para salir, cierra la ventana de la aplicación. Se recomienda exportar el horario antes de cerrar para no perder el resultado generado.
+Para salir, cierra la ventana de la aplicación. La sesión se guarda automáticamente, por lo que podrás retomar el trabajo desde donde lo dejaste la próxima vez que abras SORTH.
+
+---
+
+## 13. Repositorio de GITHUB
+https://github.com/RodrigoUC/SORTH

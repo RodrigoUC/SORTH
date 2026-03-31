@@ -33,6 +33,8 @@ class ScheduleViewerWidget(QWidget):
     edit_course_requested  = pyqtSignal(str)   # course_code
     # Emitted when user removes a group from the schedule
     group_removed          = pyqtSignal(str)   # group_id
+    # Emitted when user clears the entire schedule
+    schedule_cleared       = pyqtSignal()
     _COLOR_PALETTE = [
         QColor(76, 175, 80),   QColor(33, 150, 243),  QColor(255, 152, 0),
         QColor(156, 39, 176),  QColor(244, 67, 54),   QColor(0, 150, 136),
@@ -60,10 +62,20 @@ class ScheduleViewerWidget(QWidget):
         header_layout = QHBoxLayout()
         title = QLabel("Horario Generado")
         title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        btn_clear_schedule = QPushButton("🧹 Limpiar Horario")
+        btn_clear_schedule.setToolTip("Eliminar el horario generado actual")
+        btn_clear_schedule.clicked.connect(self._clear_schedule)
+        btn_clear_schedule.setStyleSheet(
+            "QPushButton { background-color: #C62828; color: white; "
+            "padding: 6px 12px; border-radius: 3px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #8E0000; }"
+            "QPushButton:disabled { background-color: #cccccc; color: #666666; }"
+        )
+        btn_clear_schedule.setEnabled(False)
+        self._btn_clear_schedule = btn_clear_schedule
         btn_summary = QPushButton("📊 Ver Resumen")
         btn_summary.setToolTip("Ver totales: grupos asignados, aulas utilizadas y cursos programados")
         btn_summary.clicked.connect(self._show_summary)
-        btn_summary.setMaximumWidth(130)
         btn_summary.setStyleSheet(
             "QPushButton { background-color: #1967D2; color: white; "
             "padding: 6px 12px; border-radius: 3px; font-weight: bold; }"
@@ -71,6 +83,7 @@ class ScheduleViewerWidget(QWidget):
         )
         header_layout.addWidget(title)
         header_layout.addStretch()
+        header_layout.addWidget(btn_clear_schedule)
         header_layout.addWidget(btn_summary)
         layout.addLayout(header_layout)
 
@@ -90,6 +103,7 @@ class ScheduleViewerWidget(QWidget):
         search_row.addWidget(sort_hint)
         list_layout.addLayout(search_row)
         self.list_table = QTableWidget()
+        self.list_table.setSortingEnabled(True)
         self.list_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_table.customContextMenuRequested.connect(
             lambda pos: self._show_context_menu(self.list_table, pos, self._gid_by_list_row)
@@ -141,6 +155,7 @@ class ScheduleViewerWidget(QWidget):
         cls_search_row.addWidget(sort_hint2)
         cls_layout.addLayout(cls_search_row)
         self.classroom_table = QTableWidget()
+        self.classroom_table.setSortingEnabled(True)
         self.classroom_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.classroom_table.customContextMenuRequested.connect(
             lambda pos: self._show_context_menu(self.classroom_table, pos, self._gid_by_cls_row)
@@ -189,6 +204,7 @@ class ScheduleViewerWidget(QWidget):
         self.summary_data = None
         self._list_search.clear()
         self._cls_search.clear()
+        self._btn_clear_schedule.setEnabled(False)
 
     # ------------------------------------------------------------------
     # Public API
@@ -202,6 +218,7 @@ class ScheduleViewerWidget(QWidget):
 
         self._assignments = dict(assignments)
         self._time_model = time_model
+        self._btn_clear_schedule.setEnabled(True)
         course_name_by_code = course_name_by_code or {}
 
         # Build helper maps
@@ -266,7 +283,6 @@ class ScheduleViewerWidget(QWidget):
         red_fg = QColor(183, 28, 28)
 
         self.list_table.setSortingEnabled(False)
-
         for row, (gid, (cls, day, start_min, end_min)) in enumerate(sorted(assignments.items())):
             code = gid.rsplit('-G', 1)[0]
             display_gid = gid.split('-P', 1)[0]
@@ -466,6 +482,37 @@ class ScheduleViewerWidget(QWidget):
     # ------------------------------------------------------------------
     # Search / filter
     # ------------------------------------------------------------------
+
+    def _clear_schedule(self):
+        if not self._assignments:
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Limpiar horario")
+        dlg.setMinimumWidth(500)
+        outer = QVBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        hdr = QLabel("  ⚠️  Limpiar horario")
+        hdr.setStyleSheet("background-color:#C62828;color:#FFF;font-size:12pt;"
+                          "font-weight:bold;padding:14px 20px;")
+        outer.addWidget(hdr)
+        body_w = QWidget()
+        bl = QVBoxLayout(body_w)
+        bl.setContentsMargins(28, 20, 28, 20)
+        bl.setSpacing(20)
+        lbl = QLabel("¿Eliminar el horario generado actual?\nEsta acción no se puede deshacer.")
+        lbl.setStyleSheet("font-size: 11pt;")
+        bl.addWidget(lbl)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Yes |
+                                QDialogButtonBox.StandardButton.No)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        bl.addWidget(btns)
+        outer.addWidget(body_w)
+        dlg.setLayout(outer)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._clear()
+            self.schedule_cleared.emit()
 
     def _filter_list(self, text: str):
         text = text.strip().lower()
