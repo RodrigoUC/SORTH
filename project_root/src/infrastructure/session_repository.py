@@ -21,7 +21,12 @@ class SessionRepository:
 
     def __init__(self, db_path: str | None = None):
         if db_path is None:
-            base = Path(__file__).parent.parent.parent / "data"
+            import sys
+            if getattr(sys, 'frozen', False):
+                # Running as .exe: save next to the executable
+                base = Path(sys.executable).parent / "data"
+            else:
+                base = Path(__file__).parent.parent.parent / "data"
             base.mkdir(exist_ok=True)
             db_path = str(base / "sorth_session.db")
         self._db_path = db_path

@@ -6060,10 +6060,6 @@
    'C:\\Users\\Rodri\\OneDrive\\Desktop\\Horas '
    'asistente\\SORTH\\project_root\\src\\infrastructure\\__init__.py',
    'PYMODULE'),
-  ('src.infrastructure.course_config_reader',
-   'C:\\Users\\Rodri\\OneDrive\\Desktop\\Horas '
-   'asistente\\SORTH\\project_root\\src\\infrastructure\\course_config_reader.py',
-   'PYMODULE'),
   ('src.infrastructure.excel_reader',
    'C:\\Users\\Rodri\\OneDrive\\Desktop\\Horas '
    'asistente\\SORTH\\project_root\\src\\infrastructure\\excel_reader.py',
@@ -6071,6 +6067,10 @@
   ('src.infrastructure.schedule_exporter',
    'C:\\Users\\Rodri\\OneDrive\\Desktop\\Horas '
    'asistente\\SORTH\\project_root\\src\\infrastructure\\schedule_exporter.py',
+   'PYMODULE'),
+  ('src.infrastructure.session_repository',
+   'C:\\Users\\Rodri\\OneDrive\\Desktop\\Horas '
+   'asistente\\SORTH\\project_root\\src\\infrastructure\\session_repository.py',
    'PYMODULE'),
   ('src.scheduling',
    'C:\\Users\\Rodri\\OneDrive\\Desktop\\Horas '

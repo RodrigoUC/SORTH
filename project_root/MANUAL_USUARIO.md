@@ -22,6 +22,14 @@ SORTH genera horarios académicos automáticamente, asignando grupos de cursos a
 
 Si Windows muestra una advertencia de seguridad, selecciona **Más información** → **Ejecutar de todas formas**.
 
+Si Windows Defender elimina o bloquea el archivo, agrega una exclusión:
+1. Abre **Seguridad de Windows** → **Protección contra virus y amenazas**.
+2. Ve a **Configuración de protección contra virus y amenazas** → **Exclusiones** → **Agregar o quitar exclusiones**.
+3. Haz clic en **Agregar una exclusión** → **Carpeta** y selecciona la carpeta donde está `SORTH.exe`.
+4. Intenta abrir `SORTH.exe` nuevamente.
+
+> Esto es un falso positivo conocido de ejecutables generados con PyInstaller. El archivo no contiene código malicioso.
+
 ---
 
 ## 4. Flujo de uso paso a paso

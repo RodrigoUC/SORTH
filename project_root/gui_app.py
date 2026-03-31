@@ -63,10 +63,13 @@ def main():
     """)
 
     icon_path = _resolve_icon_path()
-    if icon_path.exists():
-        app.setWindowIcon(QIcon(str(icon_path)))
-    
+    icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
+    if not icon.isNull():
+        app.setWindowIcon(icon)
+
     window = MainWindow()
+    if not icon.isNull():
+        window.setWindowIcon(icon)
     window.show()
     
     sys.exit(app.exec())
