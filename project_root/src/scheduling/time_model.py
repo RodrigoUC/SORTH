@@ -1,59 +1,99 @@
 class TimeModel:
 
-    # Fixed order for days of the week
     DAY_ORDER = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
 
-    def __init__(self, days: list[str], hours: list[int]):
-        # Sort days according to DAY_ORDER
+    # Default operating hours in minutes from midnight
+    DEFAULT_DAY_START = 7 * 60    # 07:00 = 420
+    DEFAULT_DAY_END   = 21 * 60   # 21:00 = 1260
+
+    # Lunch block to avoid
+    LUNCH_START = 12 * 60         # 12:00 = 720
+    LUNCH_END   = 13 * 60         # 13:00 = 780
+
+    # Candidate generation steps
+    STEP_WITH_PREFERENCE    = 5   # minutes — when course has preferred_start_min
+    STEP_WITHOUT_PREFERENCE = 30  # minutes — default to reduce domain size
+
+    def __init__(self, days: list[str],
+                 day_start: int = DEFAULT_DAY_START,
+                 day_end: int = DEFAULT_DAY_END):
         self.days = self._sort_days(days)
-        self.hours = sorted(hours)
+        self.day_start = day_start  # minutes from midnight
+        self.day_end = day_end      # minutes from midnight
 
         self.day_to_index = {d: i + 1 for i, d in enumerate(self.days)}
         self.index_to_day = {i + 1: d for i, d in enumerate(self.days)}
-
-        self.hour_to_index = {h: i + 1 for i, h in enumerate(self.hours)}
-        self.index_to_hour = {i + 1: h for i, h in enumerate(self.hours)}
-
         self.days_count = len(self.days)
-        self.blocks_per_day = len(self.hours)
 
     def _sort_days(self, days: list[str]) -> list[str]:
-        """Sort days according to the week order (Lunes-Sábado)."""
         return sorted(set(days), key=lambda d: self.DAY_ORDER.index(d) if d in self.DAY_ORDER else 999)
 
-    def is_valid_slot(self, day: int, start_block: int, duration: int) -> bool:
+    def is_valid_interval(self, day: int, start_min: int, end_min: int) -> bool:
+        """Check that the interval fits within the operating hours of the given day."""
         if day < 1 or day > self.days_count:
             return False
-
-        if start_block < 1:
+        if start_min < self.day_start:
             return False
-
-        end_block = start_block + duration - 1
-
-        if end_block > self.blocks_per_day:
+        if end_min > self.day_end:
             return False
-
+        if start_min >= end_min:
+            return False
         return True
 
-    def to_internal(self, day: str, hour: int) -> tuple[int, int]:
-        return (
-            self.day_to_index[day],
-            self.hour_to_index[hour]
-        )
+    def overlaps_lunch(self, start_min: int, end_min: int) -> bool:
+        """Return True if the interval overlaps with the lunch block (12:00-13:00)."""
+        return start_min < self.LUNCH_END and end_min > self.LUNCH_START
 
-    def to_external(self, day_index: int, block_index: int) -> tuple[str, int]:
-        return (
-            self.index_to_day[day_index],
-            self.index_to_hour[block_index]
-        )
+    def generate_start_candidates(self, duration_min: int,
+                                  preferred_start_min: int | None = None) -> list[int]:
+        """
+        Generate valid start times (in minutes) for a given duration.
+
+        - If preferred_start_min is set: use 5-min step around the full day
+          but only return the exact preferred start (caller handles ordering).
+        - If no preference: use 30-min step to keep domain manageable.
+
+        Returns list of start_min values where [start, start+duration] fits
+        within operating hours and does not overlap lunch.
+        """
+        step = self.STEP_WITH_PREFERENCE if preferred_start_min is not None \
+               else self.STEP_WITHOUT_PREFERENCE
+
+        candidates = []
+        t = self.day_start
+        while t + duration_min <= self.day_end:
+            end = t + duration_min
+            if not self.overlaps_lunch(t, end):
+                candidates.append(t)
+            t += step
+
+        return candidates
+
+    # ------------------------------------------------------------------
+    # Conversion helpers
+    # ------------------------------------------------------------------
+
+    def to_day_index(self, day_name: str) -> int:
+        return self.day_to_index[day_name]
+
+    def to_day_name(self, day_index: int) -> str:
+        return self.index_to_day[day_index]
+
+    @staticmethod
+    def minutes_to_hhmm(minutes: int) -> str:
+        """Convert minutes-from-midnight to 'HH:MM' string."""
+        h, m = divmod(minutes, 60)
+        return f"{h:02d}:{m:02d}"
+
+    @staticmethod
+    def hhmm_to_minutes(hhmm: str) -> int:
+        """Convert 'HH:MM' or 'HHMM' string to minutes from midnight."""
+        hhmm = hhmm.strip().replace(":", "")
+        h = int(hhmm[:2])
+        m = int(hhmm[2:]) if len(hhmm) > 2 else 0
+        return h * 60 + m
 
     @classmethod
-    def from_availability(cls, availability: dict):
-        days = set()
-        hours = set()
-
-        for (_, day, hour), _ in availability.items():
-            days.add(day)
-            hours.add(hour)
-
-        return cls(sorted(days), sorted(hours))
+    def default(cls) -> "TimeModel":
+        """Create a TimeModel with all 6 days and default 07:00-21:00 hours."""
+        return cls(cls.DAY_ORDER)

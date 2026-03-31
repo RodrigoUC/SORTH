@@ -1,24 +1,38 @@
-from src.scheduling.time_model import TimeModel
 from src.scheduling.classroom import Classroom
 
+
 def test_classroom_occupy_and_release():
-    availability = {
-        ("A1", "Lunes", 7): True,
-        ("A1", "Lunes", 8): True,
-    }
+    c = Classroom("A1", capacity=30, room_type="REGULAR")
 
-    tm = TimeModel.from_availability(availability)
+    assert c.is_available(1, 480, 600)   # 08:00-10:00 free
 
-    classroom = Classroom("A1", capacity=30, room_type="REGULAR", time_model=tm)
+    c.occupy(1, 480, 600)
+    assert not c.is_available(1, 480, 600)
+    assert not c.is_available(1, 500, 580)  # overlap inside
+    assert not c.is_available(1, 420, 500)  # overlap at start
+    assert not c.is_available(1, 560, 660)  # overlap at end
 
-    day_i, block_i = tm.to_internal("Lunes", 7)
+    c.release(1, 480, 600)
+    assert c.is_available(1, 480, 600)
 
-    assert classroom.is_available(day_i, block_i, 2)
 
-    classroom.occupy(day_i, block_i, 2)
+def test_classroom_adjacent_slots_are_available():
+    c = Classroom("A1", capacity=30, room_type="REGULAR")
+    c.occupy(1, 480, 600)
 
-    assert not classroom.is_available(day_i, block_i, 2)
+    assert c.is_available(1, 600, 720)   # starts exactly when previous ends
+    assert c.is_available(1, 360, 480)   # ends exactly when next starts
 
-    classroom.release(day_i, block_i, 2)
 
-    assert classroom.is_available(day_i, block_i, 2)
+def test_classroom_course_restriction():
+    c = Classroom("LBIOCOMP", capacity=16, room_type="LAB")
+    c.set_allowed_courses({"BIJ407P", "BIE309"})
+
+    assert c.allows_course("BIJ407P")
+    assert c.allows_course("BIE309")
+    assert not c.allows_course("BIJ400")
+
+
+def test_classroom_no_restriction_allows_all():
+    c = Classroom("A1", capacity=30, room_type="REGULAR")
+    assert c.allows_course("ANY_COURSE")

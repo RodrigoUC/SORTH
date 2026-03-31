@@ -1,118 +1,96 @@
-# src/scheduling/scheduler.py
-
 from random import Random
 from typing import List
 from .schedule_state import ScheduleState
 from .group import Group
+from .time_model import TimeModel
 
 
 class Scheduler:
 
     def __init__(self, seed: int | None = 42):
-        # Default fixed seed for reproducible results.
-        # Use seed=None if you want different results in each execution.
         self._rng = Random(seed)
-        self._all_groups = []
+        self._all_groups: List[Group] = []
 
     def schedule(self, state: ScheduleState, groups: List[Group]) -> bool:
         self._all_groups = groups
         self._initialize_domains(state, groups)
-
-        # Initial order by MRV (minimum remaining values)
         groups.sort(key=lambda g: len(g.domain))
-
         return self._backtrack(state, groups)
 
-    def _initialize_domains(self, state: ScheduleState, groups: List[Group]):
+    # ------------------------------------------------------------------
+    # Domain initialization
+    # ------------------------------------------------------------------
 
+    def _initialize_domains(self, state: ScheduleState, groups: List[Group]):
         for group in groups:
             domain = []
 
             for classroom in state.classrooms.values():
-
                 if classroom.room_type != group.required_room_type:
                     continue
-
                 if classroom.capacity < group.size:
                     continue
-
-                max_start = state.time_model.blocks_per_day - group.duration + 1
+                # Classroom course restriction
+                if group.course_code and not classroom.allows_course(group.course_code):
+                    continue
 
                 for day in range(1, state.time_model.days_count + 1):
-                    for block in range(1, max_start + 1):
+                    # Respect preferred day if set
+                    if group.preferred_day:
+                        day_name = state.time_model.to_day_name(day)
+                        if day_name != group.preferred_day:
+                            continue
 
-                        # Skip lunch hour (12:00) - check if any block overlaps with lunch
-                        overlaps_lunch = False
-                        for offset in range(group.duration):
-                            hour = state.time_model.index_to_hour.get(block + offset)
-                            if hour == 12:
-                                overlaps_lunch = True
-                                break
-                        
-                        if overlaps_lunch:
-                            continue  # Do not add to domain
+                    start_candidates = state.time_model.generate_start_candidates(
+                        group.duration_min,
+                        group.preferred_start_min
+                    )
 
-                        if classroom.is_available(day, block, group.duration):
-                            domain.append((classroom, day, block))
+                    for start_min in start_candidates:
+                        end_min = start_min + group.duration_min
+                        if classroom.is_available(day, start_min, end_min):
+                            domain.append((classroom, day, start_min))
 
             group.domain = domain
 
-    def _backtrack(self, state: ScheduleState, groups: List[Group]) -> bool:
+    # ------------------------------------------------------------------
+    # Backtracking
+    # ------------------------------------------------------------------
 
+    def _backtrack(self, state: ScheduleState, groups: List[Group]) -> bool:
         unassigned = [g for g in groups if not g.is_assigned()]
 
         if not unassigned:
             return True
 
-        # MRV dinámico
+        # MRV: pick group with smallest domain
         group = min(unassigned, key=lambda g: len(g.domain))
 
-        # Aleatoriedad controlada para desempates
         domain_candidates = list(group.domain)
         self._rng.shuffle(domain_candidates)
 
-        # LCV + classroom balance by actual load (blocks):
-        # 1) for subgroups: MUST use same classroom as parent group if possible
-        # 2) specific group preferences (day and hour)
-        # 3) prefer weekdays Monday to Friday
-        # 4) prefer schedules until 16:00
-        # 5) lower total load in blocks
-        # 6) fewer number of groups
-        # 7) higher feasibility (light LCV)
-        
-        # For subgroups, separate candidates by whether they use the parent classroom
+        # For subgroups: try parent classroom first
         if group.parent_group_id:
             parent_classroom = self._get_parent_classroom(group.parent_group_id)
             if parent_classroom:
-                # Prioritize assignments in the parent classroom
-                parent_classroom_candidates = [
-                    a for a in domain_candidates 
-                    if a[0].name == parent_classroom
-                ]
-                other_candidates = [
-                    a for a in domain_candidates 
-                    if a[0].name != parent_classroom
-                ]
-                # Try parent classroom assignments first
-                ordered_domain = self._sort_assignments(state, group, parent_classroom_candidates) + \
-                                self._sort_assignments(state, group, other_candidates)
+                parent_cands = [a for a in domain_candidates if a[0].name == parent_classroom]
+                other_cands  = [a for a in domain_candidates if a[0].name != parent_classroom]
+                ordered = (self._sort_assignments(state, group, parent_cands) +
+                           self._sort_assignments(state, group, other_cands))
             else:
-                ordered_domain = self._sort_assignments(state, group, domain_candidates)
+                ordered = self._sort_assignments(state, group, domain_candidates)
         else:
-            ordered_domain = self._sort_assignments(state, group, domain_candidates)
+            ordered = self._sort_assignments(state, group, domain_candidates)
 
-        for classroom, day, block in ordered_domain:
+        for classroom, day, start_min in ordered:
+            if state.assign(group, classroom.name, day, start_min):
 
-            if state.assign(group, classroom.name, day, block):
-                
-                # Validate subgroup constraints if applicable
-                if group.parent_group_id and not self._is_valid_subgroup_assignment(state, group, day, block):
+                if group.parent_group_id and not self._is_valid_subgroup(state, group, day, start_min):
                     state.unassign(group)
                     continue
 
                 removed = self._forward_check(state, group, unassigned)
 
-                self._all_groups = groups
                 if removed is not None and self._backtrack(state, groups):
                     return True
 
@@ -120,255 +98,162 @@ class Scheduler:
                 state.unassign(group)
 
         return False
-    
-    def _get_parent_classroom(self, parent_group_id: str) -> str | None:
-        """Get the classroom of the first assigned subgroup of a parent group."""
-        for group in self._all_groups:
-            if group.parent_group_id == parent_group_id and group.is_assigned():
-                classroom, _, _ = group.assignment
-                return classroom
-        return None
-    
+
+    # ------------------------------------------------------------------
+    # Sorting / heuristics
+    # ------------------------------------------------------------------
+
     def _sort_assignments(self, state: ScheduleState, group: Group, candidates: list) -> list:
-        """Sort assignment candidates according to preference criteria."""
         return sorted(
             candidates,
-            key=lambda assignment: (
-                self._preference_score(state, group, assignment[1], assignment[2]),
-                self._day_preference_score(state, assignment[1]),
-                self._time_preference_score(state, assignment[2]),
-                self._classroom_load_blocks(state, assignment[0].name),
-                self._classroom_usage(state, assignment[0].name),
-                -self._estimate_impact(state, group, assignment, []),
+            key=lambda a: (
+                self._preference_score(state, group, a[1], a[2]),
+                self._day_score(state, a[1]),
+                self._time_score(state, a[2]),
+                self._classroom_load(state, a[0].name),
+                self._classroom_usage(state, a[0].name),
+                -self._estimate_impact(state, group, a, []),
             )
         )
 
-    def _preference_score(self, state: ScheduleState, group: Group, day: int, start_block: int) -> int:
-        """
-        Calculate score based on group-specific preferences.
-        Lower score = matches preferences
-        Higher score = does not match preferences
-        
-        Returns:
-            0 - Matches both preferred day and hour
-            1 - Matches preferred day only
-            2 - Matches preferred hour only  
-            3 - Does not match any preference or no preferences set
-        """
-        # If no preferences, neutral score
-        if not group.preferred_day and not group.preferred_hour:
+    def _preference_score(self, state: ScheduleState, group: Group,
+                          day: int, start_min: int) -> int:
+        """0=both match, 1=day only, 2=hour only, 3=no match / no preference."""
+        if not group.preferred_day and group.preferred_start_min is None:
             return 3
-        
-        day_match = False
-        hour_match = False
-        
-        # Check day match
+
+        day_match = True
         if group.preferred_day:
-            day_name = state.time_model.index_to_day.get(day)
-            day_match = (day_name == group.preferred_day)
-        else:
-            day_match = True  # No preference, consider as match
-        
-        # Check hour match
-        if group.preferred_hour:
-            hour = state.time_model.index_to_hour.get(start_block)
-            hour_match = (hour == group.preferred_hour)
-        else:
-            hour_match = True  # No preference, consider as match
-        
-        # Calculate score
+            day_match = state.time_model.to_day_name(day) == group.preferred_day
+
+        hour_match = True
+        if group.preferred_start_min is not None:
+            hour_match = start_min == group.preferred_start_min
+
         if day_match and hour_match:
-            return 0  # Matches everything
-        elif day_match:
-            return 1  # Day only
-        elif hour_match:
-            return 2  # Hour only
-        else:
-            return 3  # No match
+            return 0
+        if day_match:
+            return 1
+        if hour_match:
+            return 2
+        return 3
+
+    def _day_score(self, state: ScheduleState, day: int) -> int:
+        day_name = state.time_model.to_day_name(day)
+        day_load = sum(1 for _, d, _, _ in state.assignments.values() if d == day)
+        weekdays = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
+        if day_name in weekdays:
+            return day_load if day_load <= 2 else 500 + day_load
+        return 50 + day_load
+
+    def _time_score(self, state: ScheduleState, start_min: int) -> int:
+        hour_load = sum(
+            1 for _, _, s, _ in state.assignments.values()
+            if s == start_min
+        )
+        if start_min <= 16 * 60:
+            return hour_load
+        return 100 + (start_min - 16 * 60) // 60
+
+    def _classroom_load(self, state: ScheduleState, classroom_name: str) -> int:
+        """Total minutes assigned to a classroom."""
+        durations = {g.group_id: g.duration_min for g in self._all_groups}
+        return sum(
+            durations.get(gid, 0)
+            for gid, (cls, _, _, _) in state.assignments.items()
+            if cls == classroom_name
+        )
 
     def _classroom_usage(self, state: ScheduleState, classroom_name: str) -> int:
-        """Number of groups already assigned to a classroom."""
-        return sum(
-            1 for assigned in state.assignments.values()
-            if assigned[0] == classroom_name
-        )
+        return sum(1 for cls, _, _, _ in state.assignments.values() if cls == classroom_name)
 
-    def _day_preference_score(self, state: ScheduleState, day: int) -> int:
-        """
-        Calculate day of week preference score.
-        Lower score = more preferred (with equitable distribution)
-        Higher score = less preferred (overloaded days)
-        
-        Favors:
-        - Equitable distribution between Monday to Friday
-        - Days with fewer classes assigned
-        - Limits to maximum 2 groups per day (heavily penalizes 3+)
-        - Saturday is acceptable but with lower priority
-        """
-        day_name = state.time_model.index_to_day.get(day)
-        
-        if day_name is None:
-            return 1000
-        
-        # Count how many classes are already assigned to this day
-        day_load = sum(
-            1 for _, (_, assigned_day, _) in state.assignments.items()
-            if assigned_day == day
-        )
-        
-        weekdays = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
-        
-        # High priority: Monday to Friday
-        if day_name in weekdays:
-            # Allow 1-2 groups (low score)
-            if day_load <= 2:
-                return day_load
-            # Heavily penalize more than 3 groups
-            else:
-                return 500 + day_load
-        
-        # Medium priority: Saturday (acceptable but after weekdays)
-        else:
-            return 50 + day_load  # Lower penalty, still usable
-    
-    def _time_preference_score(self, state: ScheduleState, start_block: int) -> int:
-        """
-        Calculate time slot preference score.
-        Lower score = more preferred
-        Higher score = less preferred
-        
-        Prioritizes:
-        - Time slots until 16:00 (with equitable distribution)
-        - Avoids time slots after 16:00
-        
-        Note: 12:00 (lunch hour) is completely excluded from domain initialization
-        """
-        # Get actual hour of the block
-        hour = state.time_model.index_to_hour.get(start_block)
-        
-        if hour is None:
-            return 1000  # High penalty if hour not found
-        
-        # Count how many classes are already assigned to this time block
-        hour_load = sum(
-            1 for _, (_, _, assigned_block) in state.assignments.items()
-            if assigned_block == start_block
-        )
-        
-        # High priority: Until 16:00 (equitable distribution by load)
-        if hour <= 16:
-            return hour_load  # Favors time slots with fewer classes
-        
-        # Low priority: After 16:00
-        else:
-            return 100 + (hour - 16)  # High score to discourage
+    # ------------------------------------------------------------------
+    # Forward checking
+    # ------------------------------------------------------------------
 
-
-    def _classroom_load_blocks(self, state: ScheduleState, classroom_name: str) -> int:
-        """Total classroom load in blocks (considers duration of each group)."""
-        durations = {g.group_id: g.duration for g in self._all_groups}
-        load = 0
-
-        for group_id, (assigned_classroom, _, _) in state.assignments.items():
-            if assigned_classroom == classroom_name:
-                load += durations.get(group_id, 0)
-
-        return load
-
-    def _forward_check(self, state, assigned_group, unassigned):
-
+    def _forward_check(self, state: ScheduleState, assigned_group: Group,
+                       unassigned: list) -> dict | None:
         removed = {}
 
         for other in unassigned:
-
             if other == assigned_group:
                 continue
 
             to_remove = []
-
             for assignment in other.domain:
-                classroom, day, block = assignment
+                classroom, day, start_min = assignment
+                end_min = start_min + other.duration_min
 
-                if not state.classrooms[classroom.name].is_available(
-                    day, block, other.duration
-                ):
+                if not state.classrooms[classroom.name].is_available(day, start_min, end_min):
                     to_remove.append(assignment)
-                
-                # Check subgroup constraints if this group has a parent
                 elif other.parent_group_id:
-                    # Check if assignment violates subgroup constraints
-                    if not self._is_valid_subgroup_assignment(state, other, day, block):
+                    if not self._is_valid_subgroup(state, other, day, start_min):
                         to_remove.append(assignment)
 
             if to_remove:
                 removed[other.group_id] = to_remove
-                for assignment in to_remove:
-                    other.domain.remove(assignment)
+                for a in to_remove:
+                    other.domain.remove(a)
 
                 if not other.domain:
                     self._restore_domains(removed)
                     return None
 
         return removed
-    
-    def _is_valid_subgroup_assignment(self, state: ScheduleState, subgroup: Group, day: int, block: int) -> bool:
-        """
-        Validate that a subgroup assignment follows constraints:
-        - Must be in a different day than other subgroups of the same parent group
-        - Must be at the same hour as other subgroups of the same parent group
-        """
+
+    # ------------------------------------------------------------------
+    # Subgroup constraints
+    # ------------------------------------------------------------------
+
+    def _get_parent_classroom(self, parent_group_id: str) -> str | None:
+        for g in self._all_groups:
+            if g.parent_group_id == parent_group_id and g.is_assigned():
+                return g.assignment[0]
+        return None
+
+    def _is_valid_subgroup(self, state: ScheduleState, subgroup: Group,
+                           day: int, start_min: int) -> bool:
+        """Subgroups of same parent must be on different days at the same start time."""
         parent_id = subgroup.parent_group_id
         if not parent_id:
             return True
-        
-        # Find all subgroups with the same parent
-        hour = state.time_model.index_to_hour.get(block)
-        if hour is None:
-            return False
-        
-        for other_group in self._all_groups:
-            if other_group.parent_group_id != parent_id or other_group == subgroup:
+
+        for other in self._all_groups:
+            if other.parent_group_id != parent_id or other is subgroup:
                 continue
-            
-            if not other_group.is_assigned():
+            if not other.is_assigned():
                 continue
-            
-            other_classroom, other_day, other_block = other_group.assignment
-            other_hour = state.time_model.index_to_hour.get(other_block)
-            
-            # Check: must be different day
+
+            _, other_day, other_start, _ = other.assignment
+
             if other_day == day:
                 return False
-            
-            # Check: must be same hour
-            if other_hour != hour:
+            if other_start != start_min:
                 return False
-        
+
         return True
 
+    # ------------------------------------------------------------------
+    # Domain restore
+    # ------------------------------------------------------------------
 
-    def _restore_domains(self, removed):
-
+    def _restore_domains(self, removed: dict | None):
         if not removed:
             return
-
         for group_id, assignments in removed.items():
-            for group in self._all_groups:
-                if group.group_id == group_id:
-                    group.domain.extend(assignments)
+            for g in self._all_groups:
+                if g.group_id == group_id:
+                    g.domain.extend(assignments)
+                    break
 
-    def _estimate_impact(self, state, group, assignment, unassigned):
+    # ------------------------------------------------------------------
+    # LCV impact estimate
+    # ------------------------------------------------------------------
 
-        classroom, day, block = assignment
-
-        state.assign(group, classroom.name, day, block)
-
-        impact = 0
-        for other in unassigned:
-            if other == group:
-                continue
-            impact += len(other.domain)
-
+    def _estimate_impact(self, state: ScheduleState, group: Group,
+                         assignment: tuple, unassigned: list) -> int:
+        classroom, day, start_min = assignment
+        state.assign(group, classroom.name, day, start_min)
+        impact = sum(len(o.domain) for o in unassigned if o is not group)
         state.unassign(group)
-
         return impact
