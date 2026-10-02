@@ -14,6 +14,11 @@ class ScheduleState:
     def assign(self, group: Group, classroom_name: str,
                day: int, start_min: int) -> bool:
 
+        # Reassignment must be explicit (unassign, then assign). Overwriting an
+        # existing record would leave its old interval occupied forever.
+        if group.is_assigned() or group.group_id in self.assignments:
+            return False
+
         if classroom_name not in self.classrooms:
             return False
 
@@ -33,7 +38,7 @@ class ScheduleState:
             return False
 
         # Check classroom course restriction
-        if group.course_code and not classroom.allows_course(group.course_code):
+        if not classroom.allows_course(group.course_code):
             return False
 
         classroom.occupy(day, start_min, end_min)

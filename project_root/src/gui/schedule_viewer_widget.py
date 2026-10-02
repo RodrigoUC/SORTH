@@ -96,14 +96,19 @@ class ScheduleViewerWidget(QWidget):
         search_row = QHBoxLayout()
         self._list_search = QLineEdit()
         self._list_search.setPlaceholderText("🔍  Buscar por código o nombre de curso...")
+        self._list_search.setClearButtonEnabled(True)
+        self._list_search.setAccessibleName("Buscar en el horario")
         self._list_search.textChanged.connect(self._filter_list)
         sort_hint = QLabel("Clic en encabezado para ordenar  •  Clic derecho o botones para editar/eliminar")
+        sort_hint.setWordWrap(True)
         sort_hint.setStyleSheet("color: #555; font-style: italic; padding: 2px 4px;")
         search_row.addWidget(self._list_search, 1)
         search_row.addWidget(sort_hint)
         list_layout.addLayout(search_row)
         self.list_table = QTableWidget()
         self.list_table.setSortingEnabled(True)
+        self.list_table.setAlternatingRowColors(True)
+        self.list_table.verticalHeader().setVisible(False)
         self.list_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_table.customContextMenuRequested.connect(
             lambda pos: self._show_context_menu(self.list_table, pos, self._gid_by_list_row)
@@ -118,7 +123,6 @@ class ScheduleViewerWidget(QWidget):
         list_btn_row.addWidget(btn_edit_list)
         list_btn_row.addWidget(btn_remove_list)
         list_btn_row.addStretch()
-        list_layout.addWidget(sort_hint)
         list_layout.addWidget(self.list_table)
         list_layout.addLayout(list_btn_row)
         list_layout.setContentsMargins(0, 0, 0, 0)
@@ -299,6 +303,7 @@ class ScheduleViewerWidget(QWidget):
                 else:
                     item = QTableWidgetItem(str(val))
                 self.list_table.setItem(row, col, item)
+            self.list_table.item(row, 0).setData(Qt.ItemDataRole.UserRole, gid)
             self._gid_by_list_row[row] = gid
 
         for i, g in enumerate(sorted(unassigned_groups, key=lambda g: g.group_id)):
@@ -309,6 +314,7 @@ class ScheduleViewerWidget(QWidget):
             for col, val in enumerate([code, name, display_gid,
                                         "⚠ Sin asignar", "-", "-", "-"]):
                 item = QTableWidgetItem(str(val))
+                item.setData(Qt.ItemDataRole.UserRole, g.group_id)
                 item.setBackground(red_bg)
                 item.setForeground(red_fg)
                 self.list_table.setItem(row, col, item)
@@ -320,11 +326,11 @@ class ScheduleViewerWidget(QWidget):
     # Grid view
     # ------------------------------------------------------------------
 
-    # Grid resolution: 30-minute slots from 07:00 to 21:00
+    # Grid resolution: 30-minute slots from 07:00 to 22:00
     _GRID_STEP   = 30          # minutes per row
     _GRID_START  = 7 * 60      # 420
-    _GRID_END    = 21 * 60     # 1260
-    _GRID_ROWS   = (_GRID_END - _GRID_START) // _GRID_STEP  # 28
+    _GRID_END    = TimeModel.DEFAULT_DAY_END
+    _GRID_ROWS   = (_GRID_END - _GRID_START) // _GRID_STEP  # 30
     _ROW_HEIGHT  = 40          # pixels per 30-min slot
 
     def _min_to_row(self, minutes: int) -> int:
@@ -474,6 +480,7 @@ class ScheduleViewerWidget(QWidget):
             self.classroom_table.setItem(row, 2, _SortableItem(day_name, _DAY_ORDER.get(day_name, 99)))
             self.classroom_table.setItem(row, 3, _SortableItem(TimeModel.minutes_to_hhmm(start_min), start_min))
             self.classroom_table.setItem(row, 4, _SortableItem(TimeModel.minutes_to_hhmm(end_min), end_min))
+            self.classroom_table.item(row, 0).setData(Qt.ItemDataRole.UserRole, gid)
             self._gid_by_cls_row[row] = gid
 
         self.classroom_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -544,7 +551,8 @@ class ScheduleViewerWidget(QWidget):
         row = table.rowAt(pos.y())
         if row < 0:
             return
-        gid = gid_map.get(row)
+        item = table.item(row, 0)
+        gid = item.data(Qt.ItemDataRole.UserRole) if item else None
         if not gid:
             return
         code = gid.rsplit('-G', 1)[0]
@@ -565,7 +573,8 @@ class ScheduleViewerWidget(QWidget):
         if row < 0:
             QMessageBox.information(self, "Info", "Selecciona una fila primero.")
             return
-        gid = gid_map.get(row)
+        item = table.item(row, 0)
+        gid = item.data(Qt.ItemDataRole.UserRole) if item else None
         if gid:
             self.edit_course_requested.emit(gid.rsplit('-G', 1)[0])
 
@@ -574,7 +583,8 @@ class ScheduleViewerWidget(QWidget):
         if row < 0:
             QMessageBox.information(self, "Info", "Selecciona una fila primero.")
             return
-        gid = gid_map.get(row)
+        item = table.item(row, 0)
+        gid = item.data(Qt.ItemDataRole.UserRole) if item else None
         if gid:
             self._remove_group(gid)
 

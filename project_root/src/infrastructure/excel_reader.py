@@ -271,9 +271,15 @@ class ExcelReader:
 
     def _get(self, row, col_map: dict, key: str):
         """
-        Get a value from a row using a partial normalized key match.
+        Prefer an exact normalized column name, then a partial key match.
         Returns None if column not found or value is NaN.
         """
+        key = self._normalize(key)
+        if key in col_map:
+            # "Curso" must win over "Nombre de Curso", regardless of order.
+            # A blank exact match must remain blank, not fall back to a name.
+            val = row[col_map[key]]
+            return None if pd.isna(val) else val
         for norm_col, orig_col in col_map.items():
             if key in norm_col:
                 val = row[orig_col]

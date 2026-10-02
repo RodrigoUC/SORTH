@@ -55,11 +55,17 @@ class TimeModel:
         Returns list of start_min values where [start, start+duration] fits
         within operating hours and does not overlap lunch.
         """
+        if duration_min <= 0:
+            return []
+
         candidates = []
 
         if preferred_start_min is not None:
             search_start = max(self.day_start, preferred_start_min - 30)
             search_end   = min(self.day_end,   preferred_start_min + 30)
+            # Keep the grid anchored to the preference even if the window is
+            # clipped by opening time (for example a 07:02 preference).
+            search_start += (preferred_start_min - search_start) % self.STEP_WITH_PREFERENCE
             t = search_start
             while t <= search_end:
                 if t + duration_min <= self.day_end:
@@ -111,5 +117,5 @@ class TimeModel:
 
     @classmethod
     def default(cls) -> "TimeModel":
-        """Create a TimeModel with all 6 days and default 07:00-21:00 hours."""
+        """Create a TimeModel with all 6 days and default 07:00-22:00 hours."""
         return cls(cls.DAY_ORDER)

@@ -174,3 +174,144 @@ def test_regular_course_prefers_regular_classroom():
 
     assert Scheduler(seed=42).schedule(state, [group])
     assert group.assignment[0] == "REG1"
+
+
+
+def test_course_without_suggested_room_can_use_an_unrestricted_room():
+    tm = TimeModel(["Lunes"], day_start=420, day_end=480)
+    reserved = Classroom("LAB1", capacity=30, room_type="LAB")
+    reserved.set_allowed_courses({"BIO"})
+    reserved.occupy(1, 420, 480)
+    regular = Classroom("A1", capacity=30, room_type="REGULAR")
+    state = ScheduleState(tm, [reserved, regular])
+    group = Group("BIO-G1", 60, "REGULAR", course_code="BIO")
+
+    assert Scheduler().schedule(state, [group])
+    assert group.assignment[0] == "A1"
+
+
+def test_suggested_restricted_room_remains_a_hard_constraint_on_retry():
+    tm = TimeModel(["Lunes"], day_start=420, day_end=480)
+    reserved = Classroom("LAB1", capacity=30, room_type="LAB")
+    reserved.set_allowed_courses({"BIO"})
+    reserved.occupy(1, 420, 480)
+    regular = Classroom("A1", capacity=30, room_type="REGULAR")
+    state = ScheduleState(tm, [reserved, regular])
+    group = Group("BIO-G1", 60, "REGULAR", course_code="BIO",
+                  suggested_classroom="LAB1")
+
+    assert not Scheduler().schedule(state, [group])
+    assert not group.is_assigned()
+    assert not regular.occupancy
+
+
+def test_missing_course_cannot_use_restricted_room_even_on_retry():
+    state, _ = _make_state()
+    state.classrooms["A1"].set_allowed_courses({"BIO"})
+    group = Group("G1", 60, "REGULAR")
+
+    assert not Scheduler().schedule(state, [group])
+    assert not state.assignments
+    assert not group.domain
+
+
+def test_existing_assignments_contribute_to_load_balancing():
+    state, _ = _make_state()
+    existing = Group("G1", 60, "REGULAR")
+    new = Group("G2", 60, "REGULAR")
+    assert state.assign(existing, "A1", 1, 420)
+    scheduler = Scheduler()
+
+    assert scheduler.schedule(state, [existing, new])
+    assert new.assignment[1] == 2
+    assert scheduler._day_load == {1: 1, 2: 1}
+    # Calling again must reconstruct counters rather than drop or double them.
+    assert scheduler.schedule(state, [existing, new])
+    assert scheduler._day_load == {1: 1, 2: 1}
+
+
+def test_retries_stop_when_a_relaxed_pass_makes_no_progress():
+    class CountingScheduler(Scheduler):
+        def __init__(self):
+            super().__init__()
+            self.passes = 0
+
+        def _greedy_pass(self, state, groups):
+            self.passes += 1
+            super()._greedy_pass(state, groups)
+
+    state, _ = _make_state(capacity=5)
+    group = Group("G1", 60, "REGULAR", size=10)
+    scheduler = CountingScheduler()
+
+    assert not scheduler.schedule(state, [group])
+    assert scheduler.passes == 2  # strict pass, then one exhausted relaxed pass
+
+
+def test_split_sessions_use_different_days_and_same_start_time():
+    state, _ = _make_state(["Lunes", "Martes", "Miércoles"])
+    groups = [Group(f"BIO-G1-P{i}", 60, "REGULAR", course_code="BIO",
+                    parent_group_id="BIO-G1", subgroup_index=i, total_subgroups=3)
+              for i in range(1, 4)]
+
+    assert Scheduler().schedule(state, groups)
+    assert len({group.assignment[1] for group in groups}) == 3
+    assert len({group.assignment[2] for group in groups}) == 1
+
+
+def test_soft_preferences_relax_without_relaxing_lunch_or_capacity():
+    tm = TimeModel(["Lunes", "Martes"], day_start=660, day_end=840)
+    room = Classroom("A1", capacity=20, room_type="REGULAR")
+    room.occupy(1, 660, 720)
+    room.occupy(1, 780, 840)
+    state = ScheduleState(tm, [room])
+    group = Group("G1", 60, "LAB", size=20, preferred_day="Lunes",
+                  preferred_start_min=720)
+
+    assert Scheduler().schedule(state, [group])
+    _, day, start, end = group.assignment
+    assert day == 2
+    assert not tm.overlaps_lunch(start, end)
+    assert tm.is_valid_interval(day, start, end)
+
+
+def test_time_candidates_are_reused_across_rooms_days_and_groups():
+    class CountingTimeModel(TimeModel):
+        def __init__(self):
+            super().__init__(["Lunes", "Martes"])
+            self.candidate_calls = []
+
+        def generate_start_candidates(self, duration_min, preferred_start_min=None):
+            self.candidate_calls.append((duration_min, preferred_start_min))
+            return super().generate_start_candidates(duration_min, preferred_start_min)
+
+    tm = CountingTimeModel()
+    state = ScheduleState(tm, [Classroom(f"A{i}", 30, "REGULAR") for i in range(3)])
+    groups = [Group(f"G{i}", 60, "REGULAR") for i in range(5)]
+    groups.append(Group("G6", 90, "REGULAR", preferred_start_min=480))
+
+    Scheduler()._build_domains(state, groups)
+
+    assert tm.candidate_calls == [(60, None), (90, 480)]
+    assert all(group.domain for group in groups)
+
+
+def test_greedy_pass_scores_only_currently_feasible_slots():
+    class CountingScheduler(Scheduler):
+        def __init__(self):
+            super().__init__()
+            self.scored = {}
+
+        def _candidate_score(self, state, group, candidate):
+            self.scored[group.group_id] = self.scored.get(group.group_id, 0) + 1
+            return super()._candidate_score(state, group, candidate)
+
+    tm = TimeModel(["Lunes"], day_start=420, day_end=540)
+    state = ScheduleState(tm, [Classroom("A1", 30, "REGULAR")])
+    groups = [Group(f"G{i}", 60, "REGULAR") for i in (1, 2)]
+    scheduler = CountingScheduler()
+
+    assert scheduler.schedule(state, groups)
+    assert scheduler.scored == {"G1": 3, "G2": 1}
+    assert groups[0].assignment == ("A1", 1, 420, 480)
+    assert groups[1].assignment == ("A1", 1, 480, 540)

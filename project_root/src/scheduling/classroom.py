@@ -43,7 +43,7 @@ class Classroom:
         """Restrict this classroom to only the given course codes."""
         self.allowed_courses = set(course_codes)
 
-    def allows_course(self, course_code: str) -> bool:
+    def allows_course(self, course_code: str | None) -> bool:
         """Return True if the course is allowed in this classroom."""
         if self.allowed_courses is None:
             return True

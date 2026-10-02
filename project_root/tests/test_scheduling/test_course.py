@@ -32,20 +32,22 @@ def test_groups_inherit_course_properties():
 
 
 def test_long_course_splits_into_subgroups():
-    # 240 min > SPLIT_THRESHOLD_MIN (180) → should split into 2 parts of 120
+    # 360 min > SPLIT_THRESHOLD_MIN (270) → three sessions of 120 min
     course = Course(
         code="BIO300",
         number_of_groups=1,
-        duration_min=240,
+        duration_min=360,
         required_room_type="REGULAR",
     )
     groups = course.generate_groups()
-    assert len(groups) == 2
+    assert len(groups) == 3
     assert groups[0].group_id == "BIO300-G1-P1"
     assert groups[1].group_id == "BIO300-G1-P2"
     assert groups[0].parent_group_id == "BIO300-G1"
     assert groups[0].duration_min == 120
     assert groups[1].duration_min == 120
+    assert groups[2].duration_min == 120
+    assert sum(group.duration_min for group in groups) == 360
 
 
 def test_short_course_no_split():
@@ -58,3 +60,24 @@ def test_short_course_no_split():
     groups = course.generate_groups()
     assert len(groups) == 1
     assert groups[0].parent_group_id is None
+
+
+
+def test_force_split_override_preserves_total_duration():
+    course = Course("BIO", 1, 240, "REGULAR", force_split=True)
+    groups = course.generate_groups()
+    assert [group.duration_min for group in groups] == [120, 120]
+    assert all(group.parent_group_id == "BIO-G1" for group in groups)
+
+
+def test_force_no_split_preserves_long_session():
+    course = Course("BIO", 1, 360, "REGULAR", force_split=False)
+    groups = course.generate_groups()
+    assert len(groups) == 1
+    assert groups[0].duration_min == 360
+    assert groups[0].parent_group_id is None
+
+
+def test_split_merges_tiny_remainder_without_losing_minutes():
+    course = Course("BIO", 1, 400, "REGULAR")
+    assert [group.duration_min for group in course.generate_groups()] == [120, 120, 160]

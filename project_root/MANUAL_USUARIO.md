@@ -8,7 +8,7 @@ SORTH genera horarios académicos automáticamente, asignando grupos de cursos a
 
 ## 2. Qué necesitas antes de comenzar
 
-- El archivo `SORTH.exe`.
+- La carpeta completa de la distribución de SORTH, extraída del ZIP. No separes `SORTH.exe` de sus dependencias.
 - Un archivo Excel (`.xlsx`) con dos hojas: **`Aulas`** y **`Cursos`**.
 
 > Los nombres de las hojas deben ser exactamente `Aulas` y `Cursos` (con mayúscula inicial). El orden de las hojas dentro del archivo no importa.
@@ -20,15 +20,9 @@ SORTH genera horarios académicos automáticamente, asignando grupos de cursos a
 1. Haz doble clic en `SORTH.exe`.
 2. Espera a que aparezca la ventana principal.
 
-Si Windows muestra una advertencia de seguridad, selecciona **Más información** → **Ejecutar de todas formas**.
+Si Windows muestra una advertencia o bloquea el archivo, detente y comunica al responsable de la distribución el texto exacto, el nombre de la detección y la versión de SORTH. Mantén activas las protecciones de Windows.
 
-Si Windows Defender elimina o bloquea el archivo, agrega una exclusión:
-1. Abre **Seguridad de Windows** → **Protección contra virus y amenazas**.
-2. Ve a **Configuración de protección contra virus y amenazas** → **Exclusiones** → **Agregar o quitar exclusiones**.
-3. Haz clic en **Agregar una exclusión** → **Carpeta** y selecciona la carpeta donde está `SORTH.exe`.
-4. Intenta abrir `SORTH.exe` nuevamente.
-
-> Esto es un falso positivo conocido de ejecutables generados con PyInstaller. El archivo no contiene código malicioso.
+Una advertencia de reputación de SmartScreen y una detección de malware de Defender son situaciones distintas. No se puede afirmar que sea un falso positivo sin investigar el archivo concreto. El responsable debe verificar la compilación y, si corresponde, solicitar una revisión a Microsoft. Consulta [Distribución para Windows](WINDOWS_DISTRIBUTION.md).
 
 ---
 

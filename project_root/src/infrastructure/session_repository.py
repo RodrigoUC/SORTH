@@ -1,6 +1,5 @@
 # src/infrastructure/session_repository.py
 
-import json
 import sqlite3
 from pathlib import Path
 
@@ -60,6 +59,7 @@ class SessionRepository:
                     number_of_groups    INTEGER NOT NULL,
                     duration_min        INTEGER NOT NULL,
                     required_room_type  TEXT NOT NULL,
+                    size                INTEGER NOT NULL DEFAULT 0,
                     suggested_classroom TEXT,
                     preferred_day       TEXT,
                     preferred_start_min INTEGER,
@@ -89,6 +89,16 @@ class SessionRepository:
                     end_min         INTEGER NOT NULL
                 );
             """)
+            # Older sessions did not persist enrollment. Add the missing column
+            # in place so existing courses, suggestions and schedules survive.
+            # Zero preserves the Course default when the original size is unknown.
+            course_columns = {
+                row["name"] for row in con.execute("PRAGMA table_info(courses)")
+            }
+            if "size" not in course_columns:
+                con.execute(
+                    "ALTER TABLE courses ADD COLUMN size INTEGER NOT NULL DEFAULT 0"
+                )
 
     def _connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self._db_path)
@@ -130,11 +140,11 @@ class SessionRepository:
                 fs = None if course.force_split is None else (1 if course.force_split else 0)
                 con.execute("""
                     INSERT INTO courses
-                        (code, name, number_of_groups, duration_min, required_room_type,
+                        (code, name, number_of_groups, duration_min, required_room_type, size,
                          suggested_classroom, preferred_day, preferred_start_min, force_split)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (course.code, course.name, course.number_of_groups,
-                      course.duration_min, course.required_room_type,
+                      course.duration_min, course.required_room_type, course.size,
                       course.suggested_classroom, course.preferred_day,
                       course.preferred_start_min, fs))
                 for idx, sg in enumerate(course.group_suggestions):
@@ -207,6 +217,7 @@ class SessionRepository:
                     number_of_groups=r["number_of_groups"],
                     duration_min=r["duration_min"],
                     required_room_type=r["required_room_type"],
+                    size=r["size"],
                     suggested_classroom=r["suggested_classroom"],
                     preferred_day=r["preferred_day"],
                     preferred_start_min=r["preferred_start_min"],

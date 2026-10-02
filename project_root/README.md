@@ -253,7 +253,9 @@ pytest --tb=short
 .\build_exe.ps1
 ```
 
-Salida: `dist/SORTH.exe`
+Salida predeterminada: carpeta `dist/SORTH/` con `SORTH.exe` y sus dependencias. Distribuye la carpeta completa. El modo de archivo único es opcional: `.\build_exe.ps1 -OneFile`.
+
+Antes de compilar, prepara PyInstaller en el entorno de desarrollo; el script no instala ni actualiza paquetes automáticamente. Consulta [Distribución para Windows](WINDOWS_DISTRIBUTION.md) para preparación, firmas y validación con las protecciones activadas.
 
 ---
 

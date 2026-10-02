@@ -1,5 +1,7 @@
 # src/application/scheduling_service.py
 
+from copy import deepcopy
+
 from ..scheduling.time_model import TimeModel
 from ..scheduling.schedule_state import ScheduleState
 from ..scheduling.scheduler import Scheduler
@@ -9,7 +11,7 @@ from ..infrastructure.excel_reader import ExcelReader
 
 class SchedulingService:
 
-    def __init__(self, excel_path: str, seed: int | None = 42):
+    def __init__(self, excel_path: str | None, seed: int | None = 42):
         self.excel_path = excel_path
         self.seed = seed
 
@@ -34,7 +36,7 @@ class SchedulingService:
         if classrooms is None:
             classrooms = reader.load_classrooms()
         else:
-            classrooms = dict(classrooms)  # shallow copy to avoid mutating caller's dict
+            classrooms = deepcopy(classrooms)  # isolate occupancy and restrictions from the UI
 
         # Reset occupancy AND restrictions so re-runs start from a clean state
         for cls in classrooms.values():
@@ -67,7 +69,7 @@ class SchedulingService:
 
         # 7. Run scheduler
         scheduler = Scheduler(seed=self.seed)
-        success = scheduler.schedule(state, groups)
+        scheduler.schedule(state, groups)
 
         # Return schedule even if partial (greedy may leave some groups unassigned)
         if state.assignments:

@@ -271,22 +271,20 @@ class CourseManagerWidget(QWidget):
     def _init_ui(self):
         layout = QVBoxLayout()
 
-        info = QLabel(
-            "Cursos a programar  —  "
-            "Cada curso puede tener múltiples grupos. "
-            "El tipo de sala se detecta automáticamente por el código (sufijo L/P → LAB)."
-        )
-        info.setWordWrap(True)
-        info.setStyleSheet(
-            "background-color: #1967D2; color: #FFFFFF; "
-            "padding: 10px; border-radius: 4px; font-weight: bold;"
-        )
+        info = QLabel("Cursos a programar")
+        info.setStyleSheet("font-size: 15pt; font-weight: 600; padding: 4px 0;")
         layout.addWidget(info)
+        self._empty_label = QLabel("Aún no hay cursos. Cargue un Excel o agregue su primer curso.")
+        self._empty_label.setWordWrap(True)
+        self._empty_label.setStyleSheet("color: #526175; padding: 8px 0;")
+        layout.addWidget(self._empty_label)
 
         # Table
         search_row = QHBoxLayout()
         self._search = QLineEdit()
-        self._search.setPlaceholderText("🔍  Buscar por código o nombre de curso...")
+        self._search.setPlaceholderText("Buscar por código o nombre de curso…")
+        self._search.setClearButtonEnabled(True)
+        self._search.setAccessibleName("Buscar cursos")
         self._search.textChanged.connect(self._filter_table)
         search_row.addWidget(self._search)
         layout.addLayout(search_row)
@@ -297,10 +295,14 @@ class CourseManagerWidget(QWidget):
             "Código", "Nombre", "Grupos", "Duración", "Aula Sugerida",
             "Día Preferido", "Hora Preferida"
         ])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSortingEnabled(True)
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(38)
         layout.addWidget(self.table)
 
         # Buttons
@@ -394,8 +396,15 @@ class CourseManagerWidget(QWidget):
             self._refresh_table()
             self.courses_changed.emit()
 
+    def _selected_course_index(self):
+        item = self.table.item(self.table.currentRow(), 0)
+        if item is None:
+            return -1
+        code = item.data(Qt.ItemDataRole.UserRole)
+        return next((i for i, course in enumerate(self.courses) if course.code == code), -1)
+
     def _edit_course(self):
-        row = self.table.currentRow()
+        row = self._selected_course_index()
         if row < 0:
             QMessageBox.warning(self, "Advertencia", "Seleccione un curso para editar.")
             return
@@ -410,7 +419,7 @@ class CourseManagerWidget(QWidget):
             self.courses_changed.emit()
 
     def _delete_course(self):
-        row = self.table.currentRow()
+        row = self._selected_course_index()
         if row < 0:
             QMessageBox.warning(self, "Advertencia", "Seleccione un curso para eliminar.")
             return
@@ -433,6 +442,8 @@ class CourseManagerWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _refresh_table(self):
+        self._empty_label.setVisible(not self.courses)
+        self.table.setSortingEnabled(False)
         self.table.setRowCount(len(self.courses))
         for i, c in enumerate(self.courses):
             h, m = divmod(c.duration_min, 60)
@@ -442,7 +453,9 @@ class CourseManagerWidget(QWidget):
             if c.preferred_start_min is not None:
                 pref_time = TimeModel.minutes_to_hhmm(c.preferred_start_min)
 
-            self.table.setItem(i, 0, QTableWidgetItem(c.code))
+            item = QTableWidgetItem(c.code)
+            item.setData(Qt.ItemDataRole.UserRole, c.code)
+            self.table.setItem(i, 0, item)
             self.table.setItem(i, 1, QTableWidgetItem(c.name or ""))
             self.table.setItem(i, 2, QTableWidgetItem(str(c.number_of_groups)))
             self.table.setItem(i, 3, QTableWidgetItem(dur_text))
@@ -450,6 +463,7 @@ class CourseManagerWidget(QWidget):
             self.table.setItem(i, 5, QTableWidgetItem(c.preferred_day or "—"))
             self.table.setItem(i, 6, QTableWidgetItem(pref_time))
 
+        self.table.setSortingEnabled(True)
         self._filter_table(self._search.text())
 
     def _filter_table(self, text: str):

@@ -6,308 +6,54 @@ from pathlib import Path
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QFileDialog, QMessageBox,
                              QTabWidget, QStatusBar, QCheckBox, QSpinBox,
-                             QDialog, QListWidget, QListWidgetItem, QDialogButtonBox,
-                             QFormLayout, QLineEdit, QComboBox, QProgressBar)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+                             QDialog, QDialogButtonBox, QProgressBar)
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 
 from .course_manager_widget import CourseManagerWidget
 from .schedule_viewer_widget import ScheduleViewerWidget
-from ..application.scheduling_service import SchedulingService
 from ..infrastructure.excel_reader import ExcelReader
 from ..infrastructure.schedule_exporter import ScheduleExporter
 from ..infrastructure.session_repository import SessionRepository
 from ..scheduling.time_model import TimeModel
 from ..scheduling.classroom import Classroom
 
-
-class ClassroomRestrictionsDialog(QDialog):
-    """
-    Dialog to configure classroom restrictions.
-    Left panel: list of classrooms (checkable).
-    Right panel: list of courses for the selected classroom (individually checkable).
-    """
-
-    def __init__(self, parent, classroom_course_map: dict[str, list[str]],
-                 existing: dict[str, set[str]] | None = None):
-        super().__init__(parent)
-        self.setWindowTitle("Aulas con Restricciones")
-        self.setModal(True)
-        self.resize(700, 480)
-        self._map = {k: list(v) for k, v in classroom_course_map.items()}
-        # Working copy: classroom -> set of selected course codes
-        self._selected: dict[str, set[str]] = {}
-        if existing:
-            for cls, codes in existing.items():
-                self._selected[cls] = set(codes)
-        self._init_ui()
-
-    def _init_ui(self):
-        outer = QVBoxLayout()
-
-        info = QLabel(
-            "Active un aula para restringirla. "
-            "Luego marque los cursos que pueden usarla (los desmarcados quedan libres)."
-        )
-        info.setWordWrap(True)
-        info.setStyleSheet(
-            "background-color: #1F2937; color: #E5E7EB; "
-            "padding: 8px; border-left: 4px solid #3B82F6; border-radius: 4px;"
-        )
-        outer.addWidget(info)
-
-        split = QHBoxLayout()
-
-        # --- Left: classroom list ---
-        left = QVBoxLayout()
-        left.addWidget(QLabel("Aulas:"))
-        self.cls_list = QListWidget()
-        self.cls_list.setMaximumWidth(200)
-        for classroom in sorted(self._map):
-            item = QListWidgetItem(classroom)
-            item.setCheckState(
-                Qt.CheckState.Checked if classroom in self._selected
-                else Qt.CheckState.Unchecked
-            )
-            self.cls_list.addItem(item)
-        self.cls_list.currentItemChanged.connect(self._on_classroom_selected)
-        left.addWidget(self.cls_list)
-        split.addLayout(left)
-
-        # --- Right: course list for selected classroom ---
-        right = QVBoxLayout()
-        self._course_label = QLabel("Seleccione un aula")
-        self._course_label.setStyleSheet("font-weight: bold;")
-        right.addWidget(self._course_label)
-        self.course_list = QListWidget()
-        self.course_list.itemChanged.connect(self._on_course_toggled)
-        right.addWidget(self.course_list)
-
-        btn_row = QHBoxLayout()
-        btn_all = QPushButton("Marcar todos")
-        btn_none = QPushButton("Desmarcar todos")
-        btn_all.clicked.connect(self._check_all)
-        btn_none.clicked.connect(self._uncheck_all)
-        btn_row.addWidget(btn_all)
-        btn_row.addWidget(btn_none)
-        right.addLayout(btn_row)
-        split.addLayout(right)
-
-        outer.addLayout(split)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        outer.addWidget(buttons)
-        self.setLayout(outer)
-
-        # Select first item
-        if self.cls_list.count():
-            self.cls_list.setCurrentRow(0)
-
-    def _current_classroom(self) -> str | None:
-        item = self.cls_list.currentItem()
-        return item.text() if item else None
-
-    def _on_classroom_selected(self, current, _previous):
-        if not current:
-            return
-        classroom = current.text()
-        self._course_label.setText(f"Cursos para {classroom}:")
-        self.course_list.blockSignals(True)
-        self.course_list.clear()
-        selected_codes = self._selected.get(classroom, set(self._map.get(classroom, [])))
-        for code in sorted(self._map.get(classroom, [])):
-            item = QListWidgetItem(code)
-            item.setCheckState(
-                Qt.CheckState.Checked if code in selected_codes
-                else Qt.CheckState.Unchecked
-            )
-            self.course_list.addItem(item)
-        self.course_list.blockSignals(False)
-
-    def _on_course_toggled(self, _item):
-        classroom = self._current_classroom()
-        if not classroom:
-            return
-        # Only persist if classroom is checked
-        cls_item = self._find_cls_item(classroom)
-        if cls_item and cls_item.checkState() == Qt.CheckState.Checked:
-            self._save_current_courses(classroom)
-
-    def _find_cls_item(self, classroom: str) -> QListWidgetItem | None:
-        for i in range(self.cls_list.count()):
-            item = self.cls_list.item(i)
-            if item.text() == classroom:
-                return item
-        return None
-
-    def _save_current_courses(self, classroom: str):
-        codes = set()
-        for i in range(self.course_list.count()):
-            item = self.course_list.item(i)
-            if item.checkState() == Qt.CheckState.Checked:
-                codes.add(item.text())
-        if codes:
-            self._selected[classroom] = codes
-        else:
-            self._selected.pop(classroom, None)
-
-    def _check_all(self):
-        self.course_list.blockSignals(True)
-        for i in range(self.course_list.count()):
-            self.course_list.item(i).setCheckState(Qt.CheckState.Checked)
-        self.course_list.blockSignals(False)
-        classroom = self._current_classroom()
-        if classroom:
-            self._save_current_courses(classroom)
-
-    def _uncheck_all(self):
-        self.course_list.blockSignals(True)
-        for i in range(self.course_list.count()):
-            self.course_list.item(i).setCheckState(Qt.CheckState.Unchecked)
-        self.course_list.blockSignals(False)
-        classroom = self._current_classroom()
-        if classroom:
-            self._selected.pop(classroom, None)
-
-    def get_restrictions(self) -> dict[str, set[str]]:
-        """Return {classroom: {course_codes}} only for checked+non-empty classrooms."""
-        result = {}
-        for i in range(self.cls_list.count()):
-            item = self.cls_list.item(i)
-            if item.checkState() == Qt.CheckState.Checked:
-                classroom = item.text()
-                codes = self._selected.get(classroom)
-                if not codes:
-                    # Default: all courses in map
-                    codes = set(self._map.get(classroom, []))
-                if codes:
-                    result[classroom] = codes
-        return result
-
-
-class AddClassroomDialog(QDialog):
-    """Dialog to add a new classroom to the current session."""
-
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.setWindowTitle("Agregar Aula")
-        self.setModal(True)
-        self.setFixedWidth(360)
-        self._init_ui()
-
-    def _init_ui(self):
-        layout = QFormLayout()
-        layout.setSpacing(10)
-
-        self.inp_code     = QLineEdit()
-        self.inp_code.setPlaceholderText("Ej: 0601, LBIO5A")
-        self.inp_desc     = QLineEdit()
-        self.inp_desc.setPlaceholderText("Ej: Aula General")
-        self.inp_campus   = QLineEdit()
-        self.inp_campus.setPlaceholderText("Ej: HO")
-        self.inp_capacity = QSpinBox()
-        self.inp_capacity.setRange(1, 500)
-        self.inp_capacity.setValue(30)
-        self.inp_type     = QComboBox()
-        self.inp_type.addItems(["REGULAR", "LAB"])
-        self.inp_type.setToolTip(
-            "Detectado automáticamente por el código (L al inicio → LAB).\n"
-            "Puedes cambiarlo manualmente si es necesario."
-        )
-
-        self.inp_code.textChanged.connect(self._update_type_preview)
-
-        layout.addRow("Código *:", self.inp_code)
-        layout.addRow("Descripción:", self.inp_desc)
-        layout.addRow("Campus:", self.inp_campus)
-        layout.addRow("Capacidad *:", self.inp_capacity)
-        layout.addRow("Tipo de sala:", self.inp_type)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self._on_accept)
-        buttons.rejected.connect(self.reject)
-
-        outer = QVBoxLayout()
-        outer.addLayout(layout)
-        outer.addWidget(buttons)
-        self.setLayout(outer)
-
-    def _update_type_preview(self, code: str):
-        room_type = "LAB" if code.strip().upper().startswith("L") else "REGULAR"
-        self.inp_type.setCurrentText(room_type)
-
-    def _on_accept(self):
-        if not self.inp_code.text().strip():
-            QMessageBox.warning(self, "Error", "El código del aula es obligatorio.")
-            return
-        self.accept()
-
-    def get_classroom(self) -> Classroom:
-        code = self.inp_code.text().strip()
-        room_type = self.inp_type.currentText()  # use whatever the user selected
-        return Classroom(
-            name=code,
-            capacity=self.inp_capacity.value(),
-            room_type=room_type,
-            description=self.inp_desc.text().strip(),
-            campus=self.inp_campus.text().strip(),
-        )
-
-
-class SchedulerWorker(QThread):
-    finished = pyqtSignal(object, object)   # assignments, groups
-    error    = pyqtSignal(str)
-
-    def __init__(self, excel_path, courses, classrooms, restrictions, seed):
-        super().__init__()
-        self._excel_path   = excel_path
-        self._courses      = courses
-        self._classrooms   = classrooms
-        self._restrictions = restrictions
-        self._seed         = seed
-
-    def run(self):
-        try:
-            service = SchedulingService(self._excel_path, seed=self._seed)
-            assignments, groups = service.run(
-                courses=self._courses,
-                classroom_restrictions=self._restrictions or None,
-                classrooms=self._classrooms or None,
-            )
-            self.finished.emit(assignments, groups)
-        except Exception as e:
-            self.error.emit(str(e))
+from .dialogs import ClassroomRestrictionsDialog, AddClassroomDialog, _InfoDialog
+from .scheduler_worker import SchedulerWorker
+from .theme import apply_theme
 
 
 class MainWindow(QMainWindow):
 
-    def __init__(self):
+    def __init__(self, repo=None, restore_session=True):
         super().__init__()
+        self._busy = False
+        self._loading = False
+        self._worker = None
         self.excel_path: str | None = None
         self.current_schedule: dict | None = None
         self.current_groups: list | None = None
         self.classroom_restrictions: dict[str, set[str]] = {}
         self._classroom_course_map: dict[str, list[str]] = {}
         self._classrooms: dict[str, Classroom] = {}
-        self._repo = SessionRepository()
+        self._repo = repo if repo is not None else SessionRepository()
 
         self._init_ui()
-        self._restore_session_if_exists()
+        if restore_session:
+            self._restore_session_if_exists()
 
     def _init_ui(self):
         self.setWindowTitle("SORTH - Sistema de Organización de Horarios")
         self._set_window_icon()
         self.setGeometry(100, 100, 1200, 800)
+        self.setMinimumSize(960, 640)
+        apply_theme(self)
 
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(24, 20, 24, 12)
+        main_layout.setSpacing(16)
 
         main_layout.addLayout(self._create_file_section())
 
@@ -315,7 +61,7 @@ class MainWindow(QMainWindow):
         self.course_manager = CourseManagerWidget(repo=self._repo)
         self.tabs.addTab(self.course_manager, "📚 Gestión de Cursos")
         self.tabs.setTabToolTip(0, "Ver, agregar, editar y eliminar los cursos a programar")
-        self.course_manager.courses_changed.connect(self._save_session)
+        self.course_manager.courses_changed.connect(self._on_inputs_changed)
         self.schedule_viewer = ScheduleViewerWidget()
         self.tabs.addTab(self.schedule_viewer, "📅 Horario Generado")
         self.tabs.setTabToolTip(1, "Visualizar el horario generado en lista, cuadrícula o por aula")
@@ -345,65 +91,63 @@ class MainWindow(QMainWindow):
     def _create_file_section(self) -> QVBoxLayout:
         layout = QVBoxLayout()
 
+        heading = QHBoxLayout()
+        title = QLabel("SORTH")
+        title.setObjectName("appTitle")
+        heading.addWidget(title)
+        subtitle = QLabel("Organización de horarios académicos")
+        subtitle.setObjectName("subtitle")
+        heading.addWidget(subtitle)
+        heading.addStretch()
+        help_button = QPushButton("Guía rápida")
+        help_button.setCheckable(True)
+        heading.addWidget(help_button)
+        layout.addLayout(heading)
         info = QLabel(
-            "¿Cómo usar SORTH?\n"
-            "1️⃣  Cargue un Excel con las hojas Aulas y Cursos (Los nombres de las hojas deben ser 'Aulas' y 'Cursos', respetando minúsculas y mayúsculas).\n"
-            "2️⃣  Revise y edite los cursos importados en la pestaña Gestión de Cursos.\n"
-            "3️⃣  (Opcional) Configure restricciones de aulas o agregue aulas nuevas.\n"
-            "4️⃣  Presione Generar Horario y visualice los resultados."
+            "1. Cargue un Excel con las hojas Aulas y Cursos (nombres exactos).\n"
+            "2. Revise los cursos y configure aulas o restricciones.\n"
+            "3. Genere el horario, revise los grupos pendientes y exporte."
         )
         info.setWordWrap(True)
-        info.setStyleSheet(
-            "background-color: #1F2937; color: #E5E7EB; "
-            "padding: 12px; border-left: 4px solid #3B82F6; "
-            "border-radius: 4px;"
-        )
+        info.setObjectName("helpText")
+        info.setVisible(False)
+        help_button.toggled.connect(info.setVisible)
         layout.addWidget(info)
+        self.overview_label = QLabel("Cargue un Excel o agregue cursos y aulas para comenzar.")
+        self.overview_label.setObjectName("overview")
+        self.overview_label.setWordWrap(True)
+        layout.addWidget(self.overview_label)
 
         file_row = QHBoxLayout()
         lbl = QLabel("Archivo Excel:")
         lbl.setStyleSheet("font-weight: bold;")
-        self.excel_path_label = QLabel("No seleccionado")
-        self.excel_path_label.setStyleSheet("color: #D32F2F; font-style: italic;")
+        self.excel_path_label = QLabel("Sin archivo seleccionado")
+        self.excel_path_label.setWordWrap(True)
+        self.excel_path_label.setTextFormat(Qt.TextFormat.PlainText)
 
-        btn_load = QPushButton("📂 Cargar Excel")
+        btn_load = self.btn_load = QPushButton("Cargar Excel")
+        btn_load.setShortcut("Ctrl+O")
         btn_load.setToolTip(
             "Abrir un archivo Excel (.xlsx) con las hojas:\n"
             "  • Aulas: código, descripción, campus, capacidad\n"
             "  • Cursos: cada fila es un grupo sugerido"
         )
         btn_load.clicked.connect(self._load_excel)
-        btn_load.setStyleSheet(
-            "QPushButton { background-color: #1967D2; color: white; "
-            "padding: 8px 15px; border-radius: 3px; font-weight: bold; }"
-            "QPushButton:hover { background-color: #1565C0; }"
-        )
 
-        self.btn_add_classroom = QPushButton("🏫 Agregar Aula")
+        self.btn_add_classroom = QPushButton("Agregar aula")
         self.btn_add_classroom.setToolTip(
             "Agregar un aula nueva a la sesión actual.\n"
             "Útil para aulas que no están en el Excel pero deben estar disponibles."
         )
         self.btn_add_classroom.clicked.connect(self._add_classroom)
-        self.btn_add_classroom.setStyleSheet(
-            "QPushButton { background-color: #6A1B9A; color: white; "
-            "padding: 8px 15px; border-radius: 3px; font-weight: bold; }"
-            "QPushButton:hover { background-color: #4A148C; }"
-        )
 
-        self.btn_restrictions = QPushButton("🔒 Restricciones de Aulas")
+        self.btn_restrictions = QPushButton("Restricciones de aulas")
         self.btn_restrictions.setToolTip(
             "Configurar qué aulas están reservadas exclusivamente para ciertos cursos.\n"
             "Los cursos restringidos SOLO pueden asignarse a su aula designada."
         )
         self.btn_restrictions.clicked.connect(self._configure_restrictions)
         self.btn_restrictions.setEnabled(False)
-        self.btn_restrictions.setStyleSheet(
-            "QPushButton { background-color: #BF360C; color: white; "
-            "padding: 8px 15px; border-radius: 3px; font-weight: bold; }"
-            "QPushButton:hover { background-color: #8D2000; }"
-            "QPushButton:disabled { background-color: #cccccc; color: #666666; }"
-        )
 
         file_row.addWidget(lbl)
         file_row.addWidget(self.excel_path_label, 1)
@@ -417,7 +161,7 @@ class MainWindow(QMainWindow):
     def _create_actions_section(self) -> QHBoxLayout:
         layout = QHBoxLayout()
 
-        seed_label = QLabel("🎲 Semilla:")
+        seed_label = QLabel("Semilla:")
         seed_label.setToolTip(
             "Controla la aleatoriedad del algoritmo.\n"
             "Semilla fija → mismo horario cada vez (reproducible).\n"
@@ -435,21 +179,18 @@ class MainWindow(QMainWindow):
         self.seed_input.setToolTip("Valor de semilla fija para resultados reproducibles")
         self.chk_random_seed.toggled.connect(self.seed_input.setDisabled)
 
-        self.btn_generate = QPushButton("🚀 Generar Horario")
+        self.btn_generate = QPushButton("Generar horario")
+        self.btn_generate.setObjectName("primaryAction")
+        self.btn_generate.setShortcut("Ctrl+Return")
         self.btn_generate.setToolTip(
             "Ejecutar el algoritmo de programación con los cursos y aulas cargados.\n"
             "El resultado se muestra en la pestaña Horario Generado."
         )
         self.btn_generate.clicked.connect(self._generate_schedule)
         self.btn_generate.setEnabled(False)
-        self.btn_generate.setStyleSheet(
-            "QPushButton { background-color: #2E7D32; color: white; "
-            "padding: 10px; font-size: 14px; font-weight: bold; border-radius: 5px; }"
-            "QPushButton:hover { background-color: #1B5E20; }"
-            "QPushButton:disabled { background-color: #cccccc; color: #666666; }"
-        )
 
-        self.btn_export = QPushButton("💾 Exportar Resultados")
+        self.btn_export = QPushButton("Exportar resultados")
+        self.btn_export.setShortcut("Ctrl+S")
         self.btn_export.setToolTip(
             "Guardar el horario generado en formato Excel (.xlsx) o CSV.\n"
             "El Excel incluye una grilla visual por aula."
@@ -471,6 +212,8 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _load_excel(self):
+        if self._busy:
+            return
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Seleccionar archivo Excel", "",
             "Excel Files (*.xlsx *.xls)"
@@ -483,7 +226,9 @@ class MainWindow(QMainWindow):
             classrooms = reader.load_classrooms()
             known = set(classrooms.keys())
             courses = reader.load_courses(known_classrooms=known)
-            self._classroom_course_map = reader.load_course_classroom_map(known_classrooms=known)
+            classroom_course_map = reader.load_course_classroom_map(known_classrooms=known)
+            self._loading = True
+            self._classroom_course_map = classroom_course_map
             self._classrooms = classrooms
 
             self.excel_path = file_path
@@ -496,7 +241,10 @@ class MainWindow(QMainWindow):
             # Reset restrictions when a new file is loaded
             self.classroom_restrictions = {}
 
-            self.btn_generate.setEnabled(True)
+            self._loading = False
+            self._invalidate_schedule()
+            self._refresh_overview()
+            self.btn_generate.setEnabled(bool(courses and classrooms))
             self.btn_restrictions.setEnabled(bool(self._classroom_course_map))
 
             self.status_bar.showMessage(
@@ -508,9 +256,8 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error",
                                  f"Error al cargar archivo Excel:\n{str(e)}")
-            self.excel_path = None
-            self.excel_path_label.setText("Error al cargar")
-            self.excel_path_label.setStyleSheet("color: red;")
+            self._loading = False
+            self.status_bar.showMessage("No se cargó el archivo. La sesión anterior se conserva.")
 
     def _add_classroom(self):
         dialog = AddClassroomDialog(self)
@@ -522,6 +269,9 @@ class MainWindow(QMainWindow):
                                 f"El aula '{classroom.name}' ya existe.")
             return
         self._classrooms[classroom.name] = classroom
+        self._invalidate_schedule()
+        self._refresh_overview()
+        self.btn_generate.setEnabled(bool(self.course_manager.get_courses()))
         self.status_bar.showMessage(
             f"✅ Aula '{classroom.name}' agregada ({classroom.room_type}, cap={classroom.capacity})"
         )
@@ -540,6 +290,7 @@ class MainWindow(QMainWindow):
 
         if dialog.exec():
             self.classroom_restrictions = dialog.get_restrictions()
+            self._invalidate_schedule()
             count = len(self.classroom_restrictions)
             if count:
                 self.btn_restrictions.setText(f"🔒 Restricciones ({count})")
@@ -552,9 +303,11 @@ class MainWindow(QMainWindow):
             self._save_session()
 
     def _generate_schedule(self):
-        if not self.excel_path:
+        if self._busy:
+            return
+        if not self._classrooms:
             QMessageBox.warning(self, "Advertencia",
-                                "Por favor cargue un archivo Excel primero.")
+                                "Cargue un Excel o agregue al menos un aula primero.")
             return
 
         courses = self.course_manager.get_courses()
@@ -572,18 +325,15 @@ class MainWindow(QMainWindow):
             restrictions=self.classroom_restrictions,
             seed=seed,
         )
-        self._worker.finished.connect(self._on_schedule_done)
+        self._worker.result_ready.connect(self._on_schedule_done)
+        self._worker.finished.connect(lambda: self._set_busy(False))
         self._worker.error.connect(self._on_schedule_error)
 
-        self.btn_generate.setEnabled(False)
-        self.btn_export.setEnabled(False)
-        self._progress.setVisible(True)
+        self._set_busy(True)
         self.status_bar.showMessage("⏳ Generando horario...")
         self._worker.start()
 
     def _on_schedule_done(self, assignments, groups):
-        self._progress.setVisible(False)
-        self.btn_generate.setEnabled(True)
 
         if assignments:
             self.current_schedule = assignments
@@ -612,7 +362,7 @@ class MainWindow(QMainWindow):
                 lines.append(f"\n⚠️  {unassigned} grupo(s) sin asignar.\nRevisa la Lista Detallada (marcados en rojo).")
 
             self.status_bar.showMessage(f"✅ Horario generado: {assigned}/{total} grupos")
-            _InfoDialog(self, "Horario generado", "\n".join(lines)).exec()
+            self._refresh_overview()
             self._save_session()
         else:
             self.status_bar.showMessage("❌ No se pudo generar el horario")
@@ -628,8 +378,6 @@ class MainWindow(QMainWindow):
             dlg.exec()
 
     def _on_schedule_error(self, message):
-        self._progress.setVisible(False)
-        self.btn_generate.setEnabled(True)
         self.status_bar.showMessage("❌ Error al generar horario")
         _InfoDialog(self, "Error", f"Error al generar el horario:\n{message}", warning=True).exec()
 
@@ -672,6 +420,8 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _save_session(self):
+        if self._loading:
+            return
         try:
             seed = None if self.chk_random_seed.isChecked() else self.seed_input.value()
             self._repo.save_session(
@@ -682,8 +432,8 @@ class MainWindow(QMainWindow):
                 restrictions=self.classroom_restrictions,
                 assignments=self.current_schedule,
             )
-        except Exception:
-            pass  # persistence errors must never crash the app
+        except Exception as error:
+            self.status_bar.showMessage(f"No se pudo guardar la sesión: {error}")
 
     def _restore_session_if_exists(self):
         if not self._repo.has_session():
@@ -743,8 +493,11 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
 
+            self._loading = True
             self.course_manager.load_courses_from_excel(data["courses"])
+            self._loading = False
 
+            self.chk_random_seed.setChecked(data["seed"] is None)
             if data["seed"] is not None:
                 self.seed_input.setValue(data["seed"])
 
@@ -772,8 +525,10 @@ class MainWindow(QMainWindow):
                 )
                 self.btn_export.setEnabled(True)
 
+            self._refresh_overview()
             self.status_bar.showMessage("✅ Sesión restaurada correctamente.")
         except Exception as e:
+            self._loading = False
             self.status_bar.showMessage(f"⚠️ No se pudo restaurar la sesión: {e}")
 
     def _edit_course_from_viewer(self, course_code: str):
@@ -789,16 +544,68 @@ class MainWindow(QMainWindow):
                 if g.group_id == gid and g.is_assigned():
                     g.assignment = None
 
+        self.btn_export.setEnabled(bool(self.current_schedule))
+        self._refresh_overview()
+        self._save_session()
+
     def _on_schedule_cleared(self):
         self.current_schedule = None
         self.current_groups = None
         self.btn_export.setEnabled(False)
+        self._refresh_overview()
         self.status_bar.showMessage("Horario eliminado.")
         self._save_session()
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _refresh_overview(self):
+        courses = self.course_manager.get_courses()
+        groups = sum(len(course.generate_groups()) for course in courses)
+        text = f"{len(courses)} cursos  ·  {groups} sesiones  ·  {len(self._classrooms)} aulas"
+        if self.current_schedule:
+            text += f"  ·  {len(self.current_schedule)}/{groups} sesiones asignadas"
+        elif courses:
+            text += "  ·  Listo para generar"
+        else:
+            text += "  ·  Cargue un Excel para comenzar"
+        self.overview_label.setText(text)
+
+    def _invalidate_schedule(self):
+        self.current_schedule = None
+        self.current_groups = None
+        self.schedule_viewer._clear()
+        self.btn_export.setEnabled(False)
+
+    def _on_inputs_changed(self):
+        if self._loading:
+            return
+        self._invalidate_schedule()
+        self._refresh_overview()
+        self.btn_generate.setEnabled(bool(self._classrooms and self.course_manager.get_courses()))
+        self.status_bar.showMessage("Datos actualizados. Genere un nuevo horario para exportar.")
+        self._save_session()
+
+    def _set_busy(self, busy):
+        self._busy = busy
+        for control in (self.btn_load, self.btn_add_classroom, self.course_manager,
+                        self.schedule_viewer, self.chk_random_seed):
+            control.setEnabled(not busy)
+        self.seed_input.setEnabled(not busy and not self.chk_random_seed.isChecked())
+        self.btn_restrictions.setEnabled(not busy and bool(self._classroom_course_map))
+        self.btn_generate.setEnabled(not busy and bool(self._classrooms and self.course_manager.get_courses()))
+        self.btn_generate.setText("Generando…" if busy else "Generar horario")
+        self.btn_export.setEnabled(not busy and bool(self.current_schedule))
+        self._progress.setVisible(busy)
+
+    def closeEvent(self, event):
+        if self._worker is not None and self._worker.isRunning():
+            self.status_bar.showMessage("Espere a que termine la generación antes de cerrar.")
+            event.ignore()
+            return
+        self._save_session()
+        event.accept()
 
     def _set_window_icon(self):
         try:
@@ -810,45 +617,3 @@ class MainWindow(QMainWindow):
                 self.setWindowIcon(QIcon(str(icon_path)))
         except Exception:
             pass
-
-
-class _InfoDialog(QDialog):
-    """Styled info/warning dialog with colored header."""
-
-    def __init__(self, parent, title: str, message: str, warning: bool = False):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setModal(True)
-        self.setMinimumWidth(500)
-
-        outer = QVBoxLayout()
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        header_color = "#8D2000" if warning else "#1967D2"
-        icon = "\u26a0\ufe0f" if warning else "\u2705"
-        header = QLabel(f"  {icon}  {title}")
-        header.setStyleSheet(
-            f"background-color: {header_color}; color: #FFFFFF; "
-            "font-size: 12pt; font-weight: bold; padding: 14px 20px;"
-        )
-        outer.addWidget(header)
-
-        body = QWidget()
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(28, 20, 28, 20)
-        body_layout.setSpacing(20)
-
-        lbl = QLabel(message)
-        lbl.setWordWrap(True)
-        lbl.setTextFormat(Qt.TextFormat.PlainText)
-        lbl.setStyleSheet("font-size: 11pt;")
-        lbl.setMinimumWidth(440)
-        body_layout.addWidget(lbl)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
-        buttons.accepted.connect(self.accept)
-        body_layout.addWidget(buttons)
-        outer.addWidget(body)
-
-        self.setLayout(outer)
