@@ -26,6 +26,8 @@ def test_spec_builds_portable_onedir_without_upx():
     args, kwargs = calls["Analysis"]
     assert Path(args[0][0]).is_file()
     assert all(Path(source).exists() for source, _ in kwargs["datas"])
+    names = {Path(source).name for source, _ in kwargs["datas"]}
+    assert {"LICENSE", "LICENSING.md", "third_party"} <= names
     exe = calls["EXE"][1]
     assert exe["exclude_binaries"] is True
     assert exe["upx"] is False
@@ -55,4 +57,6 @@ def test_build_script_does_not_silently_install_or_pack_with_upx():
     assert "pip install" not in script
     assert "$LASTEXITCODE -ne 0" in script
     assert "Get-FileHash" in script
+    for required in ("../LICENSE", "../LICENSING.md", "../third_party"):
+        assert required in script
     assert "'--specpath', 'build/spec'" in script
