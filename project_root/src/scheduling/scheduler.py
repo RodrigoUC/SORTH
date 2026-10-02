@@ -25,6 +25,7 @@ class Scheduler:
     def schedule(self, state: ScheduleState, groups: List[Group]) -> bool:
         self._all_groups = groups
         self._reset_counters()
+        self._seed_counters(state, groups)
         self._build_domains(state, groups, strict_preferences=True)
 
         ordered = sorted(groups, key=lambda g: len(g.domain))
@@ -39,7 +40,12 @@ class Scheduler:
             # day/time can still be placed elsewhere
             self._build_domains(state, unassigned, strict_preferences=False)
             unassigned.sort(key=lambda g: len(g.domain))
+            assigned_before = len(state.assignments)
             self._greedy_pass(state, unassigned)
+            if len(state.assignments) == assigned_before:
+                # A deterministic greedy pass cannot improve by repeating the
+                # same relaxed domains against an unchanged schedule.
+                break
 
         return all(g.is_assigned() for g in groups)
 
@@ -51,14 +57,23 @@ class Scheduler:
         for group in groups:
             if group.is_assigned():
                 continue
-            candidates = self._sort_candidates(state, group, group.domain)
-            for classroom, day, start_min in candidates:
+            # Domains were built before earlier groups occupied their rooms.
+            # Discard stale slots before scoring, then find the best candidate
+            # in linear time instead of sorting every candidate. min() retains
+            # the same first-in-domain tie breaking as the previous stable sort.
+            candidates = (
+                candidate for candidate in group.domain
+                if candidate[0].is_available(
+                    candidate[1], candidate[2], candidate[2] + group.duration_min)
+                and (not group.parent_group_id or self._is_valid_subgroup(
+                    group, candidate[1], candidate[2]))
+            )
+            best = min(candidates, key=lambda a: self._candidate_score(state, group, a),
+                       default=None)
+            if best is not None:
+                classroom, day, start_min = best
                 if state.assign(group, classroom.name, day, start_min):
-                    if group.parent_group_id and not self._is_valid_subgroup(group, day, start_min):
-                        state.unassign(group)
-                        continue
                     self._track_assign(group, classroom.name, day, start_min)
-                    break
 
     # ------------------------------------------------------------------
     # Domain initialization
@@ -67,30 +82,38 @@ class Scheduler:
     def _build_domains(self, state: ScheduleState, groups: List[Group],
                         strict_preferences: bool = True):
         # Build reverse map: course_code -> set of classrooms it is restricted to.
-        # A course is only bidirectionally restricted if ALL its groups that have
-        # a suggestion point to restricted classrooms — avoids forcing BIJ405-G2
-        # to LBIOCOMP just because BIJ405-G1 suggested it.
+        # The reverse restriction applies only when this group's suggested
+        # classroom belongs to the reserved set, never to unrelated groups.
         restricted_to: dict[str, set[str]] = {}
         for cls in state.classrooms.values():
             if cls.allowed_courses is not None:
                 for code in cls.allowed_courses:
                     restricted_to.setdefault(code, set()).add(cls.name)
 
+        start_candidates: dict[tuple[int, int | None], list[int]] = {}
         for group in groups:
             domain = []
             # Bidirectional restriction only applies if this specific group's
             # suggested_classroom is one of the restricted classrooms for this course.
             course_allowed_classrooms = restricted_to.get(group.course_code)
-            if course_allowed_classrooms and group.suggested_classroom:
+            if course_allowed_classrooms:
                 if group.suggested_classroom not in course_allowed_classrooms:
                     # This group's suggestion is NOT a restricted classroom,
                     # so don't force it into the restricted set
                     course_allowed_classrooms = None
+            pref_start = group.preferred_start_min if strict_preferences else None
+            start_key = (group.duration_min, pref_start)
+            if start_key not in start_candidates:
+                start_candidates[start_key] = state.time_model.generate_start_candidates(
+                    group.duration_min, pref_start)
+            days = [day for day in range(1, state.time_model.days_count + 1)
+                    if not (strict_preferences and group.preferred_day)
+                    or state.time_model.to_day_name(day) == group.preferred_day]
             for classroom in state.classrooms.values():
                 if classroom.capacity < group.size:
                     continue
                 # Bidirectional restriction
-                if group.course_code and not classroom.allows_course(group.course_code):
+                if not classroom.allows_course(group.course_code):
                     continue
                 if course_allowed_classrooms and classroom.name not in course_allowed_classrooms:
                     continue
@@ -98,13 +121,8 @@ class Scheduler:
                 if strict_preferences and group.suggested_classroom:
                     if classroom.name != group.suggested_classroom:
                         continue
-                for day in range(1, state.time_model.days_count + 1):
-                    if strict_preferences and group.preferred_day:
-                        if state.time_model.to_day_name(day) != group.preferred_day:
-                            continue
-                    pref_start = group.preferred_start_min if strict_preferences else None
-                    for start_min in state.time_model.generate_start_candidates(
-                            group.duration_min, pref_start):
+                for day in days:
+                    for start_min in start_candidates[start_key]:
                         if classroom.is_available(day, start_min, start_min + group.duration_min):
                             domain.append((classroom, day, start_min))
             group.domain = domain
@@ -118,6 +136,18 @@ class Scheduler:
         self._time_load.clear()
         self._classroom_uses.clear()
         self._course_slots.clear()
+
+    def _seed_counters(self, state: ScheduleState, groups: List[Group]):
+        """Include existing reservations when continuing an existing schedule."""
+        known_groups = {group.group_id: group for group in groups}
+        for group_id, (classroom, day, start, end) in state.assignments.items():
+            self._day_load[day] = self._day_load.get(day, 0) + 1
+            self._time_load[start] = self._time_load.get(start, 0) + 1
+            self._classroom_uses[classroom] = self._classroom_uses.get(classroom, 0) + 1
+            group = known_groups.get(group_id)
+            if group and group.course_code and group.parent_group_id is None:
+                self._course_slots.setdefault(group.course_code, []).append(
+                    (day, start, end, classroom))
 
     def _track_assign(self, group: Group, classroom_name: str, day: int, start_min: int):
         self._day_load[day] = self._day_load.get(day, 0) + 1
@@ -134,7 +164,10 @@ class Scheduler:
     # ------------------------------------------------------------------
 
     def _sort_candidates(self, state: ScheduleState, group: Group, candidates: list) -> list:
-        return sorted(candidates, key=lambda a: (
+        return sorted(candidates, key=lambda a: self._candidate_score(state, group, a))
+
+    def _candidate_score(self, state: ScheduleState, group: Group, a: tuple) -> tuple:
+        return (
             self._type_score(state, group, a[0].name),
             self._suggested_classroom_score(group, a[0].name),
             self._same_course_score(group, a[1], a[2]),
@@ -142,7 +175,7 @@ class Scheduler:
             self._day_score(state, a[1]),
             self._time_score(a[2]),
             self._classroom_uses.get(a[0].name, 0),
-        ))
+        )
 
     def _suggested_classroom_score(self, group: Group, classroom_name: str) -> int:
         """0 = matches suggested classroom, 1 = does not."""

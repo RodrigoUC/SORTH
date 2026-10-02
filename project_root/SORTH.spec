@@ -1,11 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
+
+root = Path(SPECPATH)
 
 a = Analysis(
-    ['gui_app.py'],
-    pathex=[],
+    [str(root / 'gui_app.py')],
+    pathex=[str(root)],
     binaries=[],
-    datas=[('data/input', 'data/input'), ('assets', 'assets'), ('README.md', '.'), ('../CREDITS.md', '.')],
+    datas=[(str(root / 'data/input'), 'data/input'), (str(root / 'assets'), 'assets'), (str(root / 'README.md'), '.'), (str(root.parent / 'CREDITS.md'), '.')],
     hiddenimports=['PyQt6'],
     hookspath=[],
     hooksconfig={},
@@ -19,14 +22,14 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='SORTH',
+    version=str(root / 'windows_version_info.txt'),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
@@ -35,5 +38,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['C:\\Users\\Rodri\\OneDrive\\Desktop\\Horas asistente\\SORTH\\project_root\\assets\\sorth.ico'],
+    icon=[str(root / 'assets/sorth.ico')],
 )
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='SORTH')

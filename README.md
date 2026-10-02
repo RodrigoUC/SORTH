@@ -95,7 +95,7 @@ El proyecto sigue una arquitectura en capas:
 
 ## Distribución
 
-El sistema se empaqueta como ejecutable standalone (`SORTH.exe`) para Windows, incluyendo todas las dependencias necesarias en un único archivo sin requerimientos de instalación adicional en la máquina destino.
+La distribución predeterminada para Windows es una carpeta con `SORTH.exe` y sus dependencias; no requiere instalar Python en el equipo destino. Debe extraerse y conservarse completa. Consulta [Distribución para Windows](project_root/WINDOWS_DISTRIBUTION.md) para compilar, verificar y publicar sin desactivar las protecciones de seguridad.
 
 ## Historial de Cambios
 

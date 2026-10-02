@@ -5,14 +5,15 @@ def test_default_time_model():
     tm = TimeModel.default()
     assert len(tm.days) == 6
     assert tm.day_start == 420   # 07:00
-    assert tm.day_end == 1260    # 21:00
+    assert tm.day_end == 1320    # 22:00
 
 
 def test_is_valid_interval():
     tm = TimeModel.default()
     assert tm.is_valid_interval(1, 480, 600)    # 08:00-10:00 valid
     assert not tm.is_valid_interval(1, 300, 600)  # starts before 07:00
-    assert not tm.is_valid_interval(1, 480, 1320)  # ends after 21:00
+    assert tm.is_valid_interval(1, 1260, 1320)     # last evening hour
+    assert not tm.is_valid_interval(1, 1260, 1321)  # ends after 22:00
     assert not tm.is_valid_interval(0, 480, 600)   # invalid day
 
 
@@ -60,3 +61,19 @@ def test_day_index_roundtrip():
     for day in tm.days:
         idx = tm.to_day_index(day)
         assert tm.to_day_name(idx) == day
+
+
+
+def test_early_off_grid_preference_is_preserved():
+    tm = TimeModel.default()
+    candidates = tm.generate_start_candidates(60, preferred_start_min=422)
+    assert 422 in candidates
+    assert all((start - 422) % 5 == 0 for start in candidates)
+    assert all(tm.is_valid_interval(1, start, start + 60) for start in candidates)
+
+
+def test_nonpositive_duration_has_no_candidates():
+    tm = TimeModel.default()
+    for duration in (0, -5):
+        assert tm.generate_start_candidates(duration) == []
+        assert tm.generate_start_candidates(duration, 480) == []
