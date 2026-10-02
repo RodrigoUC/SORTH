@@ -31,7 +31,7 @@ SORTH implementa un **algoritmo Greedy con reintentos** y heurísticas inteligen
 - **Horario máximo 22:00** — soporta cursos nocturnos que terminan después de las 21:00
 - **Split automático de sesiones largas** — cursos > 270 min se dividen en bloques de 120 min con chunk mínimo de 60 min. El usuario puede forzar o desactivar el split por curso desde la GUI
 - **Generación reproducible** — semilla configurable para resultados deterministas
-- **Persistencia de sesión** — la sesión activa (cursos, aulas, restricciones y horario generado) se guarda automáticamente en SQLite (`data/sorth_session.db`) y se ofrece restaurar al abrir la aplicación
+- **Persistencia de sesión** — la sesión activa (cursos, aulas, restricciones y horario generado) se guarda automáticamente en SQLite (la carpeta de datos del usuario (`%LOCALAPPDATA%/SORTH/sorth_session.db` en Windows)) y se ofrece restaurar al abrir la aplicación
 - **Exportación** en Excel (grilla visual por aula con colores por curso) y CSV
 
 ## Formato del Excel de Entrada
@@ -113,7 +113,7 @@ La distribución predeterminada para Windows es una carpeta con `SORTH.exe` y su
 - **Fallback en generación de candidatos**: si la ventana ±30 min alrededor de la preferencia no produce candidatos (ej: solapamiento con almuerzo), se usa el día completo con paso de 30 min
 
 #### Infraestructura
-- **Persistencia SQLite** (`src/infrastructure/session_repository.py`): reemplaza cualquier mecanismo anterior. La sesión completa (aulas, cursos con sugerencias por grupo, restricciones, asignaciones y metadatos) se guarda en `data/sorth_session.db`
+- **Persistencia SQLite** (`src/infrastructure/session_repository.py`): reemplaza cualquier mecanismo anterior. La sesión completa (aulas, cursos con sugerencias por grupo, restricciones, asignaciones y metadatos) se guarda en la carpeta de datos del usuario (`%LOCALAPPDATA%/SORTH/sorth_session.db` en Windows)
 - **Esquema relacional**: tablas `session`, `classrooms`, `courses`, `course_group_suggestions`, `restrictions`, `assignments`
 - **Guardado automático**: se invoca tras cada acción relevante (cargar Excel, editar cursos, generar horario, eliminar grupo)
 - **Restauración al inicio**: si existe sesión guardada con cursos, se ofrece restaurarla mediante diálogo al abrir la aplicación
