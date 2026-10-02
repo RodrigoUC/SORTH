@@ -21,6 +21,7 @@ from ..scheduling.classroom import Classroom
 from .dialogs import ClassroomRestrictionsDialog, AddClassroomDialog, _InfoDialog
 from .scheduler_worker import SchedulerWorker
 from .theme import apply_theme
+from .motion import MotionController, update_busy_indicator
 
 
 class MainWindow(QMainWindow):
@@ -38,6 +39,7 @@ class MainWindow(QMainWindow):
         self._classrooms: dict[str, Classroom] = {}
         self._repo = repo if repo is not None else SessionRepository()
 
+        self._motion = MotionController(self)
         self._init_ui()
         if restore_session:
             self._restore_session_if_exists()
@@ -69,6 +71,10 @@ class MainWindow(QMainWindow):
         self.schedule_viewer.group_removed.connect(self._on_group_removed)
         self.schedule_viewer.schedule_cleared.connect(self._on_schedule_cleared)
         main_layout.addWidget(self.tabs, 1)
+        self.tabs.currentChanged.connect(
+            lambda _index: self._motion.reveal(self.tabs.currentWidget()))
+        self.schedule_viewer.tabs.currentChanged.connect(
+            lambda _index: self._motion.reveal(self.schedule_viewer.tabs.currentWidget()))
 
         main_layout.addLayout(self._create_actions_section())
 
@@ -81,6 +87,13 @@ class MainWindow(QMainWindow):
         self._progress.setFixedHeight(16)
         self._progress.setVisible(False)
         self.status_bar.addPermanentWidget(self._progress)
+
+        self.chk_reduce_motion = QCheckBox("Reducir animaciones")
+        self.chk_reduce_motion.setToolTip("Desactiva las transiciones y el indicador animado.")
+        self.chk_reduce_motion.setChecked(self._motion.reduced)
+        self.chk_reduce_motion.toggled.connect(self._set_reduced_motion)
+        self.status_bar.addPermanentWidget(self.chk_reduce_motion)
+        update_busy_indicator(self._progress, False, self._motion.reduced)
 
         self.status_bar.showMessage("Listo. Cargue un archivo Excel para comenzar.")
 
@@ -355,7 +368,10 @@ class MainWindow(QMainWindow):
             self.schedule_viewer.display_schedule(
                 assignments, time_model, groups, course_name_map
             )
+            already_showing_results = self.tabs.currentIndex() == 1
             self.tabs.setCurrentIndex(1)
+            if already_showing_results:
+                self._motion.reveal(self.schedule_viewer)
             self._update_export_actions()
 
             total      = len(groups)
@@ -615,6 +631,10 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("Datos actualizados. Genere un nuevo horario para exportar.")
         self._save_session()
 
+    def _set_reduced_motion(self, reduced):
+        self._motion.set_reduced(reduced)
+        update_busy_indicator(self._progress, self._busy, self._motion.reduced)
+
     def _set_busy(self, busy):
         self._busy = busy
         for control in (self.btn_load, self.btn_add_classroom, self.course_manager,
@@ -625,13 +645,14 @@ class MainWindow(QMainWindow):
         self.btn_generate.setEnabled(not busy and bool(self._classrooms and self.course_manager.get_courses()))
         self.btn_generate.setText("Generando…" if busy else "Generar horario")
         self._update_export_actions()
-        self._progress.setVisible(busy)
+        update_busy_indicator(self._progress, busy, self._motion.reduced)
 
     def closeEvent(self, event):
         if self._worker is not None and self._worker.isRunning():
             self.status_bar.showMessage("Espere a que termine la generación antes de cerrar.")
             event.ignore()
             return
+        self._motion.finish()
         self._save_session()
         event.accept()
 

@@ -56,6 +56,8 @@ QHeaderView::down-arrow { image: url("$sort_down"); width: 8px; height: 5px; }
 QTableCornerButton::section { background: $navy; border: 0; }
 QStatusBar { background: $navy; color: $on_navy_muted; padding: 5px; }
 QStatusBar QLabel { color: $on_navy_muted; }
+QStatusBar QCheckBox { color: $on_navy_muted; border: 1px solid transparent; padding: 1px 3px; }
+QStatusBar QCheckBox:focus { border-color: $on_navy; }
 QProgressBar { background: $primary_soft; border: 0; border-radius: 3px; }
 QProgressBar::chunk { background: $primary; }
 QMenu, QComboBox QAbstractItemView { background: $surface; color: $text; border: 1px solid $border; selection-background-color: $accent_soft; selection-color: $text; }

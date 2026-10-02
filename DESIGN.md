@@ -24,3 +24,22 @@ Use native Segoe UI with DejaVu Sans fallback, keeping the existing 10pt desktop
 
 ## Verification and limits
 `tests/test_gui/test_theme.py` checks text ≥4.5:1, control/focus boundaries ≥3:1, schedule label contrast and packaged sorting icons. Real Qt screenshots cover list, classroom grid, course management, narrow layout, filters, pending/conflicting sessions and keyboard focus. Palette ratios are not a complete accessibility certification. Linux Qt offscreen/Fusion captures are development previews, not evidence of native Windows rendering. Confirm the Windows review workflow and native appearance before a release.
+
+## Motion and accessibility preference
+`project_root/src/gui/motion.py` owns native Qt motion. Tab/view changes and
+replacement schedule results reveal from 90% to full opacity in 150 ms with
+OutCubic easing. There is at most one effect; no per-row/per-cell animation,
+geometry animation, stagger, startup sequence, or delayed input. Effects are
+removed after finishing and cancelled on newer navigation, hide, resize, close,
+or target deletion. Native table rendering resumes without a persistent effect.
+
+The always-visible status-bar checkbox **Reducir animaciones** persists separately
+from schedule data via QSettings `SORTH/SORTH`, `interface/reduced_motion`. Enabling
+it immediately cancels transitions and replaces the indeterminate generation bar
+with a static **En curso** label, without a fabricated percentage. Status text and
+all scheduling state remain unchanged. This explicit preference does not claim
+automatic detection of the operating system's reduced-motion setting.
+
+Motion QA uses real Qt event-loop tests, recorded Qt frames, and screenshots at
+1200×800 and 960×640; screenshots alone cannot establish animation behavior.
+Native Windows timing and screen-reader announcement behavior require platform QA.
