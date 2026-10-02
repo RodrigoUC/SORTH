@@ -2,6 +2,9 @@
 
 import pandas as pd
 import unicodedata
+import re
+from pathlib import Path
+from dataclasses import dataclass
 from typing import Dict
 
 from ..scheduling.classroom import Classroom
@@ -19,10 +22,164 @@ DAY_ABBR = {
 }
 
 
+@dataclass(frozen=True)
+class ImportNotice:
+    source: str
+    parameters: dict
+
+    def render(self, translate=None):
+        return translate(self.source, **self.parameters) if translate else self.source.format(**self.parameters)
+
+    def __str__(self):
+        return self.render()
+
+
+def notice(source, **parameters):
+    return ImportNotice(source, parameters)
+
+
+class ExcelImportError(ValueError):
+    """Structured messages can be translated by the presentation layer."""
+
+    def __init__(self, messages):
+        self.notices = messages if isinstance(messages, list) else [messages]
+        self.notices = [item if isinstance(item, ImportNotice) else notice(item) for item in self.notices]
+        super().__init__(self.render())
+
+    def render(self, translate=None):
+        return "\n".join(item.render(translate) for item in self.notices)
+
+
+@dataclass
+class ExcelImport:
+    classrooms: dict
+    courses: list
+    classroom_course_map: dict
+    warnings: list[ImportNotice]
+
+
 class ExcelReader:
 
     def __init__(self, file_path: str):
         self.file_path = file_path
+        self._sheets = None
+
+    def _read_sheet(self, name):
+        # Read a single snapshot, preserving raw headers so duplicate names are
+        # detected before pandas silently renames them with a .1 suffix.
+        if self._sheets is None:
+            if Path(self.file_path).suffix.lower() != ".xlsx":
+                raise ExcelImportError("Use un archivo .xlsx. En Excel, elija Guardar como → Libro de Excel (.xlsx).")
+            try:
+                with pd.ExcelFile(self.file_path, engine="openpyxl") as workbook:
+                    missing = [n for n in ("Aulas", "Cursos") if n not in workbook.sheet_names]
+                    if missing:
+                        raise ExcelImportError(
+                            notice("Faltan las hojas: {missing}. Use esos nombres exactos. Hojas encontradas: {found}",
+                                   missing=", ".join(missing), found=", ".join(workbook.sheet_names)))
+                    raw = {n: pd.read_excel(workbook, sheet_name=n, header=None, dtype=object,
+                                            keep_default_na=False) for n in ("Aulas", "Cursos")}
+            except ExcelImportError:
+                raise
+            except FileNotFoundError as exc:
+                raise ExcelImportError("No se encontró el archivo. Selecciónelo nuevamente.") from exc
+            except PermissionError as exc:
+                raise ExcelImportError("No se pudo abrir el archivo. Revise sus permisos o guarde una copia .xlsx.") from exc
+            except Exception as exc:
+                raise ExcelImportError("No se pudo leer el libro. Ábralo en Excel y guarde una copia .xlsx sin contraseña.") from exc
+            sheets = {}
+            for sheet, data in raw.items():
+                if data.empty:
+                    raise ExcelImportError(notice("Hoja {sheet}: agregue los encabezados en la fila 1.", sheet=sheet))
+                headers = [str(v).strip() for v in data.iloc[0]]
+                normalized = [self._normalize(v) for v in headers]
+                duplicates = sorted({v for v in normalized if v and normalized.count(v) > 1})
+                if duplicates:
+                    raise ExcelImportError(notice("Hoja {sheet}, fila 1: columnas duplicadas: {columns}. Deje una sola columna de cada tipo.", sheet=sheet, columns=", ".join(duplicates)))
+                required = ["# de aula"] if sheet == "Aulas" else ["curso"]
+                missing = [v for v in required if v not in normalized]
+                if missing:
+                    raise ExcelImportError(notice("Hoja {sheet}, fila 1: falta la columna {columns}. Revise el encabezado.", sheet=sheet, columns=", ".join(missing)))
+                frame = data.iloc[1:].copy()
+                frame.columns = [v if v else f"__extra_{i}" for i, v in enumerate(normalized)]
+                sheets[sheet] = frame
+            self._sheets = sheets
+        return self._sheets[name]
+
+    def load_validated(self) -> ExcelImport:
+        """Validate the complete input before the caller replaces live data.
+
+        Blank preference values retain historical defaults. Malformed nonblank
+        values are errors; harmless fallbacks are reported before confirmation.
+        """
+        warnings = []
+        errors = []
+        seen = set()
+        for index, row in self._read_sheet("Aulas").iterrows():
+            name = self._identifier(row.get("# de aula"))
+            if not name:
+                if any(str(row.get(c, "")).strip() for c in ("descripcion", "campus", "capacidad")):
+                    errors.append(notice("Aulas, fila {row}: falta # DE AULA.", row=index + 1))
+                continue
+            if name in seen:
+                errors.append(notice("Aulas, fila {row}: el aula '{room}' está duplicada.", row=index + 1, room=name))
+            seen.add(name)
+            value = row.get("capacidad", "")
+            if self._blank(value):
+                warnings.append(notice("Aulas, fila {row}: '{room}' no tiene capacidad; se usará 0.", row=index + 1, room=name))
+            else:
+                try:
+                    number = float(value)
+                    if isinstance(value, bool) or not number.is_integer() or number < 0:
+                        raise ValueError
+                except (ValueError, TypeError, OverflowError):
+                    errors.append(notice("Aulas, fila {row}: CAPACIDAD debe ser un entero mayor o igual a 0.", row=index + 1))
+        course_count = 0
+        for index, row in self._read_sheet("Cursos").iterrows():
+            code = self._identifier(row.get("curso"))
+            if not code:
+                if any(not self._blank(row.get(c)) for c in ("nombre de curso", "horas", "aula", "dias")):
+                    errors.append(notice("Cursos, fila {row}: falta Curso (código).", row=index + 1))
+                continue
+            course_count += 1
+            hours = row.get("horas")
+            if not self._blank(hours):
+                match = re.fullmatch(r"\s*(\d{2})(\d{2})\s*-\s*(\d{2})(\d{2})\s*", str(hours))
+                values = tuple(map(int, match.groups())) if match else None
+                if (not values or values[0] > 23 or values[2] > 23 or
+                    values[1] > 59 or values[3] > 59 or
+                    values[0] * 60 + values[1] >= values[2] * 60 + values[3]):
+                    errors.append(notice("Cursos, fila {row}: Horas debe ser HHMM-HHMM, con fin posterior al inicio (ej. 0800-1055).", row=index + 1))
+            days = row.get("dias")
+            if not self._blank(days) and any(v.strip().upper() not in DAY_ABBR for v in str(days).split(",")):
+                errors.append(notice("Cursos, fila {row}: Días admite L, I, M, J, V, S separados por comas; I=martes y M=miércoles.", row=index + 1))
+            room = self._identifier(row.get("aula"))
+            if room and room != "-" and room not in seen:
+                warnings.append(notice("Cursos, fila {row}: el aula '{room}' no aparece en Aulas; se importará sin esa preferencia.", row=index + 1, room=room))
+        if not seen:
+            errors.append("Aulas: agregue al menos un aula con # DE AULA.")
+        if not course_count:
+            errors.append("Cursos: agregue al menos una fila con Curso (código).")
+        if errors:
+            messages = [notice("Corrija el archivo y vuelva a cargarlo:")] + errors[:20]
+            if len(errors) > 20:
+                messages.append(notice("… y {count} errores más.", count=len(errors) - 20))
+            raise ExcelImportError(messages)
+        classrooms = self.load_classrooms()
+        known = set(classrooms)
+        return ExcelImport(classrooms, self.load_courses(known), self.load_course_classroom_map(known), warnings)
+
+    @staticmethod
+    def _blank(value):
+        return value is None or pd.isna(value) or str(value).strip() in ("", "-")
+
+    @staticmethod
+    def _identifier(value):
+        if value is None or pd.isna(value):
+            return ""
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value).strip()
 
     # ------------------------------------------------------------------
     # Public API
@@ -34,25 +191,25 @@ class ExcelReader:
         Columns: # DE AULA, DESCRIPCIÓN, CAMPUS, CAPACIDAD, CAPACIDAD 80%
         Room type: starts with 'L' → LAB, otherwise → REGULAR.
         """
-        df = pd.read_excel(self.file_path, sheet_name="Aulas")
+        df = self._read_sheet("Aulas")
 
         classrooms = {}
         for _, row in df.iterrows():
-            raw_name = row.get("# DE AULA")
+            raw_name = row.get("# de aula")
             if pd.isna(raw_name):
                 continue
 
-            name = str(raw_name).strip()
+            name = self._identifier(raw_name)
             if not name:
                 continue
 
-            capacity_raw = row.get("CAPACIDAD")
-            capacity = int(capacity_raw) if pd.notna(capacity_raw) else 0
+            capacity_raw = row.get("capacidad")
+            capacity = int(float(capacity_raw)) if not self._blank(capacity_raw) else 0
 
-            description_raw = row.get("DESCRIPCIÓN")
+            description_raw = row.get("descripcion")
             description = str(description_raw).strip() if pd.notna(description_raw) else ""
 
-            campus_raw = row.get("CAMPUS")
+            campus_raw = row.get("campus")
             campus = str(campus_raw).strip() if pd.notna(campus_raw) else ""
 
             room_type = "LAB" if name.startswith("L") else "REGULAR"
@@ -85,7 +242,7 @@ class ExcelReader:
         if known_classrooms is None:
             known_classrooms = set(self.load_classrooms().keys())
 
-        df = pd.read_excel(self.file_path, sheet_name="Cursos")
+        df = self._read_sheet("Cursos")
 
         # Normalize column names for robust matching
         col_map = self._build_col_map(df.columns)
@@ -107,7 +264,7 @@ class ExcelReader:
             start_min, end_min = self._parse_horas(horas_raw)
 
             aula_raw = self._get(row, col_map, "aula")
-            aula = str(aula_raw).strip() if aula_raw is not None else None
+            aula = self._identifier(aula_raw) if aula_raw is not None else None
             if aula and aula.lower() in ("nan", "-", ""):
                 aula = None
             # Ignore aula references that don't exist in the classrooms sheet
@@ -176,7 +333,7 @@ class ExcelReader:
         if known_classrooms is None:
             known_classrooms = set(self.load_classrooms().keys())
 
-        df = pd.read_excel(self.file_path, sheet_name="Cursos")
+        df = self._read_sheet("Cursos")
         col_map = self._build_col_map(df.columns)
 
         classroom_courses: dict[str, list[str]] = {}
@@ -188,7 +345,7 @@ class ExcelReader:
                 continue
 
             code = str(code_raw).strip()
-            aula = str(aula_raw).strip()
+            aula = self._identifier(aula_raw)
 
             if not code or not aula or aula.lower() in ("nan", "-", ""):
                 continue

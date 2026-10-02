@@ -55,6 +55,21 @@ El sistema lee un único archivo Excel con **dos hojas**.
 
 > **Importante**: el sistema busca las hojas **por nombre exacto** (`Aulas` y `Cursos`), respetando mayúsculas y minúsculas. El **orden de las hojas** dentro del archivo **no importa**.
 
+### Validación antes de importar
+
+Use un archivo **.xlsx**; los archivos antiguos .xls deben guardarse como Libro de Excel (.xlsx).
+Los encabezados van en la primera fila. Se permiten columnas reordenadas y diferencias de
+mayúsculas, espacios exteriores o acentos en los encabezados. Los nombres de hojas siguen
+siendo exactamente `Aulas` y `Cursos`; las hojas adicionales se ignoran.
+
+- `Aulas` requiere `# DE AULA`; `Cursos` requiere `Curso`. Debe haber al menos un aula y un curso.
+- Las filas completamente vacías se ignoran. Una fila de datos sin identificador debe corregirse.
+- No se admiten encabezados duplicados ni códigos de aula repetidos. Los códigos de curso repetidos sí representan grupos distintos.
+- `CAPACIDAD` debe ser un entero no negativo. Si falta, se avisa que se usará 0.
+- `Horas` y `Días` vacíos o `-` mantienen los valores predeterminados; los valores no vacíos mal escritos muestran la hoja y fila que debe corregirse.
+- Las referencias a aulas desconocidas siguen importándose sin esa preferencia, pero ahora se muestran como avisos antes de confirmar.
+- Cancelar la selección, cancelar los avisos o recibir un error de validación conserva los datos y el horario abierto.
+
 ### Hoja `Aulas`
 | # DE AULA | DESCRIPCIÓN | CAMPUS | CAPACIDAD | CAPACIDAD 80% |
 |-----------|-------------|--------|-----------|---------------|

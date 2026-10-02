@@ -146,8 +146,10 @@ class MainWindow(QMainWindow):
         btn_load.setShortcut("Ctrl+O")
         btn_load.setToolTip(
             "Abrir un archivo Excel (.xlsx) con las hojas:\n"
-            "  • Aulas: código, descripción, campus, capacidad\n"
-            "  • Cursos: cada fila es un grupo sugerido"
+            "  • Aulas: # DE AULA y CAPACIDAD (entero ≥ 0)\n"
+            "  • Cursos: Curso; cada fila es un grupo sugerido\n"
+            "Opcionales: Nombre de Curso, Horas (0800-1055), Aula y Días (L,I,M,J,V,S).\n"
+            "Los encabezados van en la fila 1; el orden de columnas no importa."
         )
         btn_load.clicked.connect(self._load_excel)
 
@@ -238,17 +240,31 @@ class MainWindow(QMainWindow):
             return
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Seleccionar archivo Excel", "",
-            "Excel Files (*.xlsx *.xls)"
+            "Libro de Excel (*.xlsx)"
         )
         if not file_path:
             return
 
         try:
             reader = ExcelReader(file_path)
-            classrooms = reader.load_classrooms()
-            known = set(classrooms.keys())
-            courses = reader.load_courses(known_classrooms=known)
-            classroom_course_map = reader.load_course_classroom_map(known_classrooms=known)
+            imported = reader.load_validated()
+            classrooms = imported.classrooms
+            courses = imported.courses
+            classroom_course_map = imported.classroom_course_map
+            if imported.warnings:
+                review = QMessageBox(self)
+                review.setWindowTitle("Revisar importación")
+                review.setIcon(QMessageBox.Icon.Warning)
+                review.setTextFormat(Qt.TextFormat.PlainText)
+                review.setText(f"Avisos del archivo: {len(imported.warnings)}")
+                review.setInformativeText("\n".join(str(item) for item in imported.warnings[:3]) + "\n\nRevise los detalles antes de continuar. Cancelar conserva la sesión actual.")
+                review.setDetailedText("\n".join(str(item) for item in imported.warnings))
+                review.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+                review.setDefaultButton(QMessageBox.StandardButton.Cancel)
+                review.button(QMessageBox.StandardButton.Ok).setText("Importar con avisos")
+                review.button(QMessageBox.StandardButton.Cancel).setText("Cancelar")
+                if review.exec() != QMessageBox.StandardButton.Ok:
+                    return
             self._loading = True
             self._classroom_course_map = classroom_course_map
             self._classrooms = classrooms
