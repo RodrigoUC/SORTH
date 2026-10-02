@@ -144,3 +144,51 @@ def test_actual_worker_completes_and_controls_recover(window, app):
     assert window.btn_export.isEnabled()
     assert window.btn_load.isEnabled()
     assert not window._classrooms['A1'].occupancy
+
+
+@pytest.mark.parametrize('cancel_at', ['file', 'warnings', 'invalid'])
+def test_import_cancel_and_validation_preserve_complete_session(window, tmp_path, monkeypatch, cancel_at):
+    import pandas as pd
+    load_inputs(window)
+    window.excel_path = 'previous.xlsx'
+    window.classroom_restrictions = {'A1': {'BIO'}}
+    window._classroom_course_map = {'A1': ['BIO']}
+    window.current_schedule = {'BIO-G1': ('A1', 1, 480, 540)}
+    window.btn_export.setEnabled(True)
+    window._save_session()
+    from pathlib import Path
+    before = Path(window._repo._db_path).read_bytes()
+    path = tmp_path / 'import.xlsx'
+    with pd.ExcelWriter(path) as writer:
+        pd.DataFrame({'# DE AULA': ['NEW'], 'CAPACIDAD': [30]}).to_excel(writer, sheet_name='Aulas', index=False)
+        pd.DataFrame({'Curso': ['NEW'], 'Horas': ['wrong' if cancel_at == 'invalid' else '0800-0900'], 'Aula': ['UNKNOWN']}).to_excel(writer, sheet_name='Cursos', index=False)
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a: ('' if cancel_at == 'file' else str(path), ''))
+    monkeypatch.setattr(QMessageBox, 'critical', lambda *a: None)
+    monkeypatch.setattr(QMessageBox, 'exec', lambda *a: QMessageBox.StandardButton.Cancel)
+    window._load_excel()
+    assert window.excel_path == 'previous.xlsx'
+    assert set(window._classrooms) == {'A1'}
+    assert window.course_manager.get_courses()[0].code == 'BIO'
+    assert window.classroom_restrictions == {'A1': {'BIO'}}
+    assert window._classroom_course_map == {'A1': ['BIO']}
+    assert window.current_schedule == {'BIO-G1': ('A1', 1, 480, 540)}
+    assert window.btn_export.isEnabled()
+    assert Path(window._repo._db_path).read_bytes() == before
+    assert not window._loading
+
+
+def test_successful_import_commits_all_inputs(window, tmp_path, monkeypatch):
+    import pandas as pd
+    load_inputs(window)
+    path = tmp_path / 'input.xlsx'
+    with pd.ExcelWriter(path) as writer:
+        pd.DataFrame({'# DE AULA': ['NEW'], 'CAPACIDAD': [30]}).to_excel(writer, sheet_name='Aulas', index=False)
+        pd.DataFrame({'Curso': ['NEW'], 'Aula': ['NEW']}).to_excel(writer, sheet_name='Cursos', index=False)
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a: (str(path), ''))
+    window._load_excel()
+    assert window.excel_path == str(path)
+    assert set(window._classrooms) == {'NEW'}
+    assert window.course_manager.get_courses()[0].code == 'NEW'
+    assert window._classroom_course_map == {'NEW': ['NEW']}
+    assert window.current_schedule is None
+    assert window.btn_generate.isEnabled()

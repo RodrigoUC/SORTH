@@ -31,6 +31,10 @@ class SchedulingService:
             (assignments, groups) on success, (None, None) on failure.
         """
         reader = ExcelReader(self.excel_path)
+        if classrooms is None and courses is None:
+            imported = reader.load_validated()
+            classrooms = imported.classrooms
+            courses = imported.courses
 
         # 1. Load classrooms (use provided or load from Excel)
         if classrooms is None:
