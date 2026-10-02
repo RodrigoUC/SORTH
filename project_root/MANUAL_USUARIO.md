@@ -1,8 +1,8 @@
-# Manual de Usuario — SORTH v2.0
+# Manual de usuario de SORTH
 
 ## 1. ¿Qué es SORTH?
 
-SORTH genera horarios académicos automáticamente, asignando grupos de cursos a aulas y franjas horarias disponibles. El sistema respeta preferencias de aula, día y hora, y permite configurar restricciones exclusivas por aula.
+SORTH genera horarios académicos automáticamente, asignando grupos de cursos a aulas y franjas horarias disponibles. El sistema intenta respetar preferencias de aula, día y hora, y permite configurar restricciones exclusivas por aula. Este manual explica cómo preparar el Excel, revisar el horario y exportarlo.
 
 ---
 
@@ -28,9 +28,9 @@ Una advertencia de reputación de SmartScreen y una detección de malware de Def
 
 ## 4. Flujo de uso paso a paso
 
-### Paso 1 — Cargar el archivo Excel
+### Paso 1 - Cargar el archivo Excel
 
-1. Haz clic en **📂 Cargar Excel**.
+1. Haz clic en **Cargar Excel**.
 2. Selecciona el archivo `.xlsx` con las hojas `Aulas` y `Cursos`.
 3. El nombre del archivo aparecerá en verde junto al botón si la carga fue exitosa.
 
@@ -38,50 +38,52 @@ Los cursos se importan automáticamente a la pestaña **Gestión de Cursos**.
 
 ---
 
-### Paso 2 — Revisar y editar cursos
+### Paso 2 - Revisar y editar cursos
 
-En la pestaña **📚 Gestión de Cursos** verás todos los cursos importados.
+En la pestaña **Gestión de Cursos** verás todos los cursos importados.
 
 **Buscar cursos**: usa la barra de búsqueda para filtrar por código o nombre en tiempo real.
 
-**Editar un curso**: selecciona la fila y haz clic en **✏️ Editar**. Puedes modificar:
+**Editar un curso**: selecciona la fila y haz clic en **Editar**. Puedes modificar:
 - Código y nombre del curso.
 - Número de grupos.
 - Duración (horas + minutos).
 - Aula sugerida.
 - Día preferido.
-- Hora preferida — activa el checkbox y selecciona la hora con el selector `HH:mm`.
-- **División en días** — controla si el curso se divide en múltiples sesiones:
+- Hora preferida - activa el checkbox y selecciona la hora con el selector `HH:mm`.
+- **División en días** - controla si el curso se divide en múltiples sesiones:
   - **Automático** (por defecto): se divide solo si la duración supera 4.5 horas.
-  - **Forzar división**: siempre se divide en bloques de 2 horas en días distintos, sin importar la duración.
+  - **Forzar división**: divide la duración en sesiones para días distintos. Se usan bloques de 2 horas; un resto menor de 1 hora se incorpora al bloque anterior. Una duración de hasta 2 horas sigue siendo una sola sesión.
   - **No dividir**: se asigna completo en un solo día, sin importar la duración.
 
-> El tipo de sala (LAB / REGULAR) se detecta automáticamente por el código del curso (sufijo `L` o `P` → LAB). Es solo informativo.
+> Al importar, el tipo de sala (LAB / REGULAR) se toma del aula sugerida, si se conoce. En caso contrario se infiere del código del curso (sufijo `L` o `P`: LAB). El formulario muestra el tipo de sala detectado.
 
-**Agregar un curso manualmente**: haz clic en **➕ Agregar Curso** y completa el formulario.
+**Agregar un curso manualmente**: haz clic en **Agregar Curso** y completa el formulario.
 
-**Eliminar un curso**: selecciona la fila y haz clic en **🗑️ Eliminar**.
+**Eliminar un curso**: selecciona la fila y haz clic en **Eliminar**.
 
-**Limpiar todo**: elimina todos los cursos de la lista con **🧹 Limpiar Todo**.
+**Limpiar todo**: elimina todos los cursos de la lista con **Limpiar Todo**.
+
+Al cambiar los cursos o las aulas, el horario anterior se invalida. Debes generar un horario nuevo antes de exportar.
 
 ---
 
-### Paso 3 — Agregar aulas nuevas (opcional)
+### Paso 3 - Agregar aulas nuevas (opcional)
 
 Si necesitas incluir aulas que no están en el Excel:
 
-1. Haz clic en **🏫 Agregar Aula**.
+1. Haz clic en **Agregar aula**.
 2. Completa el código, descripción, campus y capacidad.
 3. El tipo (LAB / REGULAR) se detecta automáticamente por el código, pero puedes cambiarlo manualmente.
 4. Haz clic en **OK**.
 
 ---
 
-### Paso 4 — Configurar restricciones de aulas (opcional)
+### Paso 4 - Configurar restricciones de aulas (opcional)
 
 Permite reservar un aula exclusivamente para ciertos cursos.
 
-1. Haz clic en **🔒 Restricciones de Aulas**.
+1. Haz clic en **Restricciones de aulas**.
 2. En el panel izquierdo, activa el checkbox del aula que deseas restringir.
 3. En el panel derecho aparecen los cursos asociados a esa aula en el Excel. Marca solo los cursos que deben usar esa aula exclusivamente.
    - Usa **Marcar todos** / **Desmarcar todos** para agilizar la selección.
@@ -91,51 +93,51 @@ Permite reservar un aula exclusivamente para ciertos cursos.
 
 ---
 
-### Paso 5 — Configurar semilla (opcional)
+### Paso 5 - Configurar semilla (opcional)
 
 En la barra inferior:
 
-- **Semilla fija** (por defecto): el resultado es idéntico en cada ejecución con el mismo valor. Útil para reproducir resultados.
+- **Semilla fija** (por defecto): permite reproducir resultados con los mismos datos, configuración, semilla y versión del programa.
 - **Aleatoria**: cada ejecución puede generar una distribución distinta.
 
 ---
 
-### Paso 6 — Generar el horario
+### Paso 6 - Generar el horario
 
-1. Haz clic en **🚀 Generar Horario**.
-2. Aparece una barra de progreso animada mientras el algoritmo trabaja. La aplicación no se congela.
+1. Haz clic en **Generar horario**.
+2. Aparece una barra de progreso animada mientras el algoritmo trabaja en segundo plano. Durante la generación, los controles de edición se deshabilitan; espera a que termine antes de cerrar.
 3. Al terminar, un diálogo muestra el resumen: grupos asignados, aulas utilizadas y cursos programados.
 
 > Si algunos grupos no pudieron asignarse por falta de aulas disponibles, se indica en el resumen y aparecen marcados en **rojo** en la Lista Detallada.
 
 ---
 
-### Paso 7 — Revisar el horario generado
+### Paso 7 - Revisar el horario generado
 
-En la pestaña **📅 Horario Generado** tienes tres vistas:
+En la pestaña **Horario Generado** tienes tres vistas:
 
-#### 📋 Lista Detallada
+#### Lista Detallada
 - Muestra todos los grupos asignados con código, nombre, aula, día y horario.
 - **Buscar**: filtra por código o nombre de curso en tiempo real.
-- **Ordenar**: haz clic en cualquier encabezado de columna para ordenar ascendente o descendente. Los días se ordenan en orden de semana (Lunes → Sábado).
-- **Editar curso**: selecciona una fila y haz clic en **✏️ Editar Curso** para modificar el curso en Gestión de Cursos.
-- **Eliminar del horario**: selecciona una fila y haz clic en **🗑️ Eliminar del Horario** para quitar ese grupo. Las tres vistas se actualizan en tiempo real.
+- **Ordenar**: haz clic en cualquier encabezado de columna para ordenar ascendente o descendente. Los días se ordenan en orden de semana (Lunes a Sábado).
+- **Editar curso**: selecciona una fila y haz clic en **Editar Curso** para modificar el curso en Gestión de Cursos.
+- **Eliminar del horario**: selecciona una fila y haz clic en **Eliminar del Horario** para quitar ese grupo. Las tres vistas se actualizan en tiempo real.
 - También puedes hacer **clic derecho** sobre una fila para acceder a estas opciones.
 
-#### 📅 Vista de Cuadrícula
+#### Vista de Cuadrícula
 - Muestra el horario del aula seleccionada en una grilla de 07:00 a 22:00 en franjas de 30 minutos.
 - Cada bloque ocupa el espacio proporcional a su duración real.
 - Los colores identifican cada curso (consistentes en todas las vistas y en el Excel exportado).
 - Selecciona el aula con el selector desplegable en la parte superior.
 
-#### 🏫 Por Aula
+#### Por Aula
 - Lista todos los grupos ordenados por aula, día y hora.
 - **Buscar**: filtra por nombre de aula o código de grupo.
 - **Ordenar**: clic en encabezado de columna.
 - **Editar / Eliminar**: mismos botones que en Lista Detallada.
 
-#### 📊 Ver Resumen
-Haz clic en **📊 Ver Resumen** para ver:
+#### Ver Resumen
+Haz clic en **Ver Resumen** para ver:
 - Tarjetas con grupos asignados (y porcentaje), sin asignar, aulas utilizadas y cursos programados.
 - Tabla de grupos por día.
 - Tabla de grupos por aula (ordenada de mayor a menor carga).
@@ -143,13 +145,27 @@ Haz clic en **📊 Ver Resumen** para ver:
 
 ---
 
-### Paso 8 — Exportar resultados
+### Paso 8 - Exportar resultados
 
-1. Haz clic en **💾 Exportar Resultados**.
+1. Haz clic en **Exportar resultados**.
 2. Elige el formato y la ubicación:
    - **Excel (`.xlsx`)**: incluye una hoja por aula con grilla visual, más hojas de lista detallada y por aula. Los colores de los cursos son consistentes con la GUI.
    - **CSV (`.csv`)**: lista detallada en formato plano.
 3. Haz clic en **Guardar**.
+
+---
+
+### Consulta y exportación nuevas (cuando se incorpore PR #3)
+
+Esta sección solo corresponde a la versión que incluye [PR #3](https://github.com/RodrigoUC/SORTH/pull/3). Si tu versión muestra **Exportar resultados**, sigue los pasos anteriores. Si muestra **Exportar completo** y **Exportar filtrado (N)**, usa estas instrucciones:
+
+- **Buscar** combina todas las palabras sin distinguir mayúsculas ni acentos. Los filtros compartidos **Aula**, **Día** y **Estado** se aplican a las tres vistas.
+- **Restablecer filtros** vacía Buscar y devuelve Aula, Día y Estado a sus opciones generales.
+- **Exportar completo** y **Ctrl+S** incluyen todas las sesiones asignadas, independientemente de los filtros.
+- **Exportar filtrado (N)** incluye solo las sesiones asignadas que cumplen los filtros compartidos. N indica la cantidad; el diálogo de guardado y el mensaje final también muestran alcance y cantidad.
+- Las sesiones **Sin asignar** se consultan en Lista detallada y no se exportan como filas de horario. Sin coincidencias asignadas, la exportación filtrada no está disponible.
+- Cambiar de pestaña o elegir un aula en el selector local de la cuadrícula no restringe la exportación. Para exportar un aula, usa el filtro compartido **Aula**.
+- Ambas opciones permiten Excel o CSV. Durante la generación o cuando los datos cambian e invalidan el horario, no están disponibles. Cancelar el guardado conserva los filtros y el horario.
 
 ---
 
@@ -159,23 +175,25 @@ Haz clic en **📊 Ver Resumen** para ver:
 
 | # DE AULA | DESCRIPCIÓN | CAMPUS | CAPACIDAD | CAPACIDAD 80% |
 |-----------|-------------|--------|-----------|---------------|
-| LBIOCOMP  | Lab Cómputo Biología | HO | 16 | 13 |
-| 601       | Aula General | HO | 60 | 48 |
+| LBIO3B | Laboratorio de Biología | HO | 16 | 13 |
+| 0601 | Aula General | HO | 60 | 48 |
+| 0604 | Aula General | HO | 60 | 48 |
 
-- Aulas cuyo código comienza con `L` → tipo **LAB**.
-- El resto → tipo **REGULAR**.
+- Aulas cuyo código comienza con `L`: tipo **LAB**.
+- El resto: tipo **REGULAR**.
 - La columna `CAPACIDAD 80%` es opcional e informativa.
+- Guarda como texto los códigos con ceros iniciales, como `0601`, y usa exactamente el mismo código en ambas hojas.
 - Aulas referenciadas en `Cursos` que no existen aquí se ignoran (el grupo queda sin preferencia de aula).
 
 ### Hoja `Cursos`
 
 | Curso   | Nombre de Curso  | Cantidad de Grupos | Horas     | Aula   | Días |
 |---------|------------------|--------------------|-----------|--------|------|
-| BIJ400  | Biología General | —                  | 0800-1030 | 0604   | L    |
-| BIJ400  | Biología General | —                  | 1000-1230 | 0601   | M    |
-| BIJ400L | Bio General Lab  | —                  | 0700-0930 | LBIO3B | I    |
+| BIJ400  | Biología General | -                  | 0800-1030 | 0604   | L    |
+| BIJ400  | Biología General | -                  | 1000-1230 | 0601   | M    |
+| BIJ400L | Bio General Lab  | -                  | 0700-0930 | LBIO3B | I    |
 
-- **Cada fila = un grupo sugerido**. Dos filas con el mismo código = 2 grupos distintos.
+- **Cada fila = un grupo sugerido**. Dos filas con el mismo código = 2 grupos distintos. La cantidad se obtiene contando filas; la columna `Cantidad de Grupos` no determina ese número.
 - `Horas`: formato `HHMM-HHMM` (ej: `0800-1055`). Vacío o `-` = sin preferencia de hora.
 - `Días`: `L`=Lunes, `I`=Martes, `M`=Miércoles, `J`=Jueves, `V`=Viernes, `S`=Sábado.
 - `Aula` y `Días` son opcionales.
@@ -186,15 +204,15 @@ Haz clic en **📊 Ver Resumen** para ver:
 
 - El sistema intenta respetar las preferencias de aula, día y hora indicadas en el Excel.
 - Si no hay espacio disponible en el slot preferido, el grupo se asigna en otro horario (preferencias blandas).
-- El horario cubre de **07:00 a 22:00**, excluyendo el almuerzo (12:00–13:00).
-- Cursos con duración mayor a 4.5 horas se dividen automáticamente en bloques de 2 horas en días distintos. Puedes cambiar este comportamiento por curso desde el campo **División en días** al editar el curso.
-- El algoritmo es determinista con semilla fija: el mismo Excel + misma semilla = mismo resultado.
+- El horario cubre de **07:00 a 22:00**, excluyendo el almuerzo (12:00-13:00).
+- Cursos con duración mayor a 4.5 horas se dividen automáticamente en sesiones para días distintos. Se usan bloques de 2 horas; un resto menor de 1 hora se incorpora al bloque anterior. Puedes cambiar este comportamiento por curso desde el campo **División en días** al editar el curso.
+- La reproducibilidad requiere los mismos cursos, aulas, restricciones, semilla y versión del programa. Un cambio en esos datos puede cambiar el horario.
 
 ---
 
-## 9. Persistencia de datos
+## 7. Persistencia de datos
 
-SORTH guarda automáticamente la sesión activa en una base de datos local (`data/sorth_session.db`) cada vez que realizas una acción relevante: cargar un Excel, editar cursos, generar el horario o eliminar un grupo.
+SORTH intenta guardar automáticamente la sesión activa en una base de datos local (`data/sorth_session.db`, junto al ejecutable en la distribución de Windows) cada vez que realizas una acción relevante: cargar un Excel, editar cursos, generar el horario o eliminar un grupo.
 
 Al abrir la aplicación, si existe una sesión guardada, aparece un diálogo preguntando si deseas restaurarla. Al aceptar, se recuperan:
 - Los cursos y sus configuraciones.
@@ -203,13 +221,15 @@ Al abrir la aplicación, si existe una sesión guardada, aparece un diálogo pre
 - El horario generado (si existía al cerrar).
 - La ruta del Excel y el valor de semilla.
 
-Si seleccionas **No**, la aplicación inicia con el estado vacío sin borrar la sesión guardada.
+Si seleccionas **No**, la aplicación inicia con el estado vacío. La sesión anterior no se borra en ese momento, pero las acciones siguientes y el cierre pueden sustituirla.
 
-> La sesión se guarda localmente en el equipo. No se envía ningún dato a servicios externos.
+La carpeta debe permitir escritura. Si aparece **No se pudo guardar la sesión** en la barra de estado, exporta el horario si hay uno disponible, conserva el Excel original y comunica el error al responsable de la distribución.
+
+> El archivo de sesión contiene datos de los cursos, aulas, horario y ruta del Excel. Protégelo como parte de tus archivos de trabajo y no lo incluyas en una distribución de SORTH.
 
 ---
 
-## 10. Problemas frecuentes
+## 8. Problemas frecuentes
 
 ### No se pudo generar un horario válido
 **Causas posibles:**
@@ -219,7 +239,7 @@ Si seleccionas **No**, la aplicación inicia con el estado vacío sin borrar la 
 **Qué hacer:**
 - Revisar que existan aulas suficientes en la hoja `Aulas`.
 - Reducir o eliminar restricciones de aulas.
-- Agregar aulas adicionales con el botón **🏫 Agregar Aula**.
+- Agregar aulas adicionales con el botón **Agregar aula**.
 
 ### Algunos grupos quedan sin asignar
 Aparecen en rojo en la Lista Detallada. Causas:
@@ -239,21 +259,35 @@ Aparecen en rojo en la Lista Detallada. Causas:
 
 ---
 
-## 11. Recomendaciones
+## 9. Recomendaciones
 
 - Cargar el Excel antes de agregar cursos manualmente para no perder los datos importados.
 - Usar semilla fija para resultados reproducibles; cambiar la semilla si el resultado no es satisfactorio.
 - Configurar las restricciones de aulas **antes** de generar el horario.
-- Exportar el resultado si se necesita compartirlo o archivarlo — el Excel exportado es el formato definitivo.
+- Exportar el resultado si se necesita compartirlo o archivarlo - el Excel exportado es el formato definitivo.
 - Mantener una copia de respaldo del Excel original.
 
 ---
 
-## 12. Cierre
+## 10. Cierre
 
-Para salir, cierra la ventana de la aplicación. La sesión se guarda automáticamente, por lo que podrás retomar el trabajo desde donde lo dejaste la próxima vez que abras SORTH.
+Para salir, espera a que termine cualquier generación y cierra la ventana de la aplicación. SORTH intenta guardar la sesión al cerrar. Exporta los resultados que quieras conservar y mantén una copia del Excel original; la restauración depende de que el archivo de sesión se haya guardado correctamente.
 
 ---
 
-## 13. Repositorio de GITHUB
-https://github.com/RodrigoUC/SORTH
+## 11. Repositorio y documentación
+
+El código fuente y la documentación se encuentran en el [repositorio de SORTH](https://github.com/RodrigoUC/SORTH).
+
+### Generar el PDF desde el código fuente
+
+`MANUAL_USUARIO.md` es la fuente editable. El PDF se genera desde ella; no edites ni reutilices copias históricas del PDF. Para prepararlo, abre una terminal en `project_root`, activa un entorno virtual e instala las dependencias de documentación:
+
+```console
+python -m pip install -r requirements-docs.txt
+python tools/build_manual.py --output build/docs/MANUAL_USUARIO.pdf
+```
+
+El generador no descarga recursos. Produce un PDF con tablas, enlaces y páginas numeradas. Si se ejecuta sin `--output`, utiliza la misma carpeta `build/docs` del proyecto. Los documentos enlazados con rutas relativas apuntan a la documentación del repositorio en la rama `main`; abrir esos enlaces requiere conexión.
+
+Antes de distribuir el manual, revisa el PDF generado y confirma que corresponde al mismo código que la aplicación. El archivo generado es un artefacto de compilación y no debe sustituir la fuente Markdown.

@@ -43,6 +43,15 @@ def main():
     if not icon.isNull():
         app.setWindowIcon(icon)
 
+    if "--smoke-test" in sys.argv:
+        import argparse
+        from src.application.packaged_smoke import run_smoke_test
+        parser = argparse.ArgumentParser(description="Validate SORTH in an isolated session")
+        parser.add_argument("--smoke-test", action="store_true")
+        parser.add_argument("--smoke-output", type=Path, required=True)
+        args = parser.parse_args()
+        sys.exit(run_smoke_test(app, args.smoke_output))
+
     window = MainWindow()
     if not icon.isNull():
         window.setWindowIcon(icon)
