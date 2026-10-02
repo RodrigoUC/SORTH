@@ -184,3 +184,48 @@ def test_grid_print_range_omits_leading_and_trailing_blank_hours(tmp_path):
     assert sheet['A1'].value == 'Horario · Aula 2'
     assert sheet['A4'].value == '21:00'
     assert sheet.max_row == 5
+
+
+def test_detail_natural_group_order_and_chronological_parts(tmp_path):
+    assignments = {
+        'BIO-G10': ('Aula 10', 1, 420, 450),
+        'BIO-G2-P1': ('Aula 2', 5, 420, 450),
+        'BIO-G2-P10': ('Aula 2', 1, 480, 510),
+        'BIO-G2-P2': ('Aula 2', 1, 420, 450),
+        'BIO-G1': ('Aula 1', 6, 420, 450),
+    }
+    path, workbook = export_pair(tmp_path, assignments)
+    rows = read_csv(path)
+    assert detail_values(workbook['Asignaciones']) == rows
+    assert [(row[2], row[4], row[5]) for row in rows[1:]] == [
+        ('BIO-G1', 'Sábado', '07:00'), ('BIO-G2', 'Lunes', '07:00'),
+        ('BIO-G2', 'Lunes', '08:00'), ('BIO-G2', 'Viernes', '07:00'),
+        ('BIO-G10', 'Lunes', '07:00'),
+    ]
+    assert workbook.sheetnames == ['Aula 1', 'Aula 2', 'Aula 10', 'Asignaciones', 'Por Aula']
+    assert [row[0].value for row in workbook['Por Aula'].iter_rows(min_row=2)] == [
+        'Aula 1', 'Aula 2', 'Aula 2', 'Aula 2', 'Aula 10']
+    reversed_path, reversed_book = export_pair(tmp_path / 'reverse', dict(reversed(list(assignments.items()))))
+    assert read_csv(reversed_path) == rows
+    assert reversed_book.sheetnames == workbook.sheetnames
+    filtered = {gid: value for gid, value in assignments.items() if value[0] == 'Aula 2'}
+    filtered_path, filtered_book = export_pair(tmp_path / 'filtered', filtered)
+    assert read_csv(filtered_path) == [COLUMNS] + rows[2:5]
+    assert detail_values(filtered_book['Asignaciones']) == read_csv(filtered_path)
+
+
+def test_print_pages_never_split_merged_session_labels(tmp_path):
+    _, workbook = export_pair(tmp_path, {
+        'BIO-G1': ('R', 1, 420, 1320),
+        'BOT-G2': ('R', 2, 780, 1260),
+    }, course_name_by_code={'BIO': 'Biología y conservación marina',
+                           'BOT': 'Botánica tropical y evolución'})
+    sheet = workbook['Aula R']
+    breaks = [item.id for item in sheet.row_breaks.brk]
+    assert breaks
+    for merged in sheet.merged_cells.ranges:
+        assert not any(merged.min_row <= boundary < merged.max_row for boundary in breaks)
+    labels = [str(cell.value or '') for row in sheet for cell in row]
+    assert sum('BIO-G1' in text and '07:00–22:00' in text for text in labels) > 1
+    for start, end in zip([4] + [boundary + 1 for boundary in breaks], breaks + [sheet.max_row]):
+        assert sum(sheet.row_dimensions[row].height for row in range(start, end + 1)) <= 400
