@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTableWidget, QTableWidgetIte
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QAction
 
+from .theme import COLORS
 from ..scheduling.time_model import TimeModel
 from ..scheduling.schedule_grid import build_schedule_grid, course_color, COURSE_COLORS, GRID_TEXT_COLOR
 
@@ -71,6 +72,7 @@ class ScheduleViewerWidget(QWidget):
         self._btn_summary.clicked.connect(self._show_summary)
         header.addWidget(self._btn_summary)
         self._btn_clear_schedule = QPushButton("Limpiar horario")
+        self._btn_clear_schedule.setObjectName("dangerAction")
         self._btn_clear_schedule.setToolTip("Eliminar todas las asignaciones del horario actual")
         self._btn_clear_schedule.clicked.connect(self._clear_schedule)
         header.addWidget(self._btn_clear_schedule)
@@ -144,7 +146,7 @@ class ScheduleViewerWidget(QWidget):
         layout.addWidget(self.tabs, 1)
         scope = QLabel("Exportar completo incluye todas las asignaciones. Exportar filtrado usa Buscar, Aula, Día y Estado; no el aula de la cuadrícula.")
         scope.setWordWrap(True)
-        scope.setStyleSheet("color: #526175;")
+        scope.setObjectName("mutedText")
         layout.addWidget(scope)
 
     def _make_filter(self, layout, text, accessible_name):
@@ -182,6 +184,7 @@ class ScheduleViewerWidget(QWidget):
         edit.setToolTip("Editar el curso de la sesión seleccionada; será necesario generar de nuevo")
         edit.clicked.connect(lambda: self._action_edit(table, {}))
         remove = QPushButton("Quitar del horario")
+        remove.setObjectName("dangerAction")
         remove.setToolTip("Dejar la sesión seleccionada sin asignar")
         remove.clicked.connect(lambda: self._action_remove(table, {}))
         actions.addWidget(edit)
@@ -189,7 +192,7 @@ class ScheduleViewerWidget(QWidget):
         actions.addStretch()
         hint = QLabel("Seleccione una fila para editar o quitar.")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #526175;")
+        hint.setObjectName("mutedText")
         actions.addWidget(hint)
         layout.addLayout(actions)
         table.itemSelectionChanged.connect(self._update_actions)
@@ -274,8 +277,8 @@ class ScheduleViewerWidget(QWidget):
                 item.setData(Qt.ItemDataRole.UserRole, gid)
                 item.setToolTip(str(value))
                 if gid not in self._assignments:
-                    item.setBackground(QColor("#FCE8E6"))
-                    item.setForeground(QColor("#9F2525"))
+                    item.setBackground(QColor(COLORS["danger_soft"]))
+                    item.setForeground(QColor(COLORS["danger"]))
                 table.setItem(row, col, item)
         header = table.horizontalHeader()
         for col, width in enumerate(widths):
@@ -348,8 +351,8 @@ class ScheduleViewerWidget(QWidget):
         table.setHorizontalHeaderLabels(["Hora"] + tm.days)
         for row, start in enumerate(grid.boundaries[:-1]):
             item = QTableWidgetItem(TimeModel.minutes_to_hhmm(start))
-            item.setBackground(QColor("#EDF2F8"))
-            item.setForeground(QColor("#33465E"))
+            item.setBackground(QColor(COLORS["primary_soft"]))
+            item.setForeground(QColor(COLORS["navy"]))
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item.setToolTip(f"{TimeModel.minutes_to_hhmm(start)}–{TimeModel.minutes_to_hhmm(grid.boundaries[row + 1])}")
             table.setItem(row, 0, item)
@@ -367,9 +370,9 @@ class ScheduleViewerWidget(QWidget):
             item = QTableWidgetItem(text)
             item.setToolTip(text)
             item.setData(Qt.ItemDataRole.UserRole, tuple(entry[0] for entry in block.entries))
-            item.setBackground(QColor("#FCE8E6") if conflict else
+            item.setBackground(QColor(COLORS["danger_soft"]) if conflict else
                                self._course_colors[self._code(block.entries[0][0])])
-            item.setForeground(QColor("#9F2525") if conflict else QColor("#" + GRID_TEXT_COLOR))
+            item.setForeground(QColor(COLORS["danger"]) if conflict else QColor("#" + GRID_TEXT_COLOR))
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             col = tm.days.index(tm.to_day_name(block.day)) + 1
             table.setItem(block.row, col, item)

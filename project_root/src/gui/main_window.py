@@ -6,7 +6,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QFileDialog, QMessageBox,
                              QTabWidget, QStatusBar, QCheckBox, QSpinBox,
-                             QDialog, QDialogButtonBox, QProgressBar)
+                             QDialog, QDialogButtonBox, QProgressBar, QFrame)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 
@@ -91,7 +91,10 @@ class MainWindow(QMainWindow):
     def _create_file_section(self) -> QVBoxLayout:
         layout = QVBoxLayout()
 
-        heading = QHBoxLayout()
+        header = QFrame()
+        header.setObjectName("brandHeader")
+        heading = QHBoxLayout(header)
+        heading.setContentsMargins(16, 6, 16, 6)
         title = QLabel("SORTH")
         title.setObjectName("appTitle")
         heading.addWidget(title)
@@ -100,9 +103,10 @@ class MainWindow(QMainWindow):
         heading.addWidget(subtitle)
         heading.addStretch()
         help_button = QPushButton("Guía rápida")
+        help_button.setObjectName("headerAction")
         help_button.setCheckable(True)
         heading.addWidget(help_button)
-        layout.addLayout(heading)
+        layout.addWidget(header)
         info = QLabel(
             "1. Cargue un Excel con las hojas Aulas y Cursos (nombres exactos).\n"
             "2. Revise los cursos y configure aulas o restricciones.\n"
