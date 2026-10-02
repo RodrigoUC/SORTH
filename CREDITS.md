@@ -20,3 +20,7 @@ La atribución anterior no acredita por sí sola permiso de redistribución. Con
 - **pandas**: Procesamiento de datos
 - **openpyxl**: Manipulación de archivos Excel
 - **PyInstaller**: Compilación a ejecutable
+
+## Textos de licencia preservados
+
+Consulta [third_party/README.md](third_party/README.md) para los avisos exactos de 29 wheels Windows, CPython y fuentes del manual, con hashes y procedencia. No sustituye la revisión del ejecutable final ni acredita permisos sobre el icono o documentos académicos.

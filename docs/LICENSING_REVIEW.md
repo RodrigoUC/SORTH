@@ -22,7 +22,7 @@ Referencia: [GNU GPL v3](https://www.gnu.org/licenses/gpl-3.0.html). Esta revisi
 | Python, NumPy, SIP y otras dependencias | Metadatos y archivos de licencia de cada distribución exacta | Inventariar todo `requirements-windows.lock`, incluyendo herramientas si se redistribuyen. |
 | Generación PDF y pruebas | `requirements-docs.txt`, `requirements-dev.txt` | Revisar licencias, fuentes y avisos si se incluyen en un paquete o entregable. |
 
-Este cuadro **no es un inventario completo ni una certificación de cumplimiento**. Las versiones exactas están en los requirements y el lock; al cambiar el lock debe repetirse la revisión. Antes de la release, recopilar textos de licencia y avisos de terceros en el paquete, además de preparar el código fuente correspondiente cuando corresponda. Los enlaces de esta guía no sustituyen los textos que deban acompañar la distribución.
+Los avisos de los 29 wheels exactos, incluidos transitivos, están recopilados en [third_party](../third_party/README.md), con hashes verificados contra el lock y textos originales. El ZIP de revisión incluye este inventario, LICENSE y avisos. Este cuadro **no es un SBOM del ejecutable ni una certificación de cumplimiento**. Las versiones exactas están en los requirements y el lock; al cambiar el lock debe repetirse la revisión. Antes de la release, completar el inventario de DLL/plugins realmente enviados y los avisos nativos faltantes, además de [preparar las fuentes correspondientes](SOURCE_AVAILABILITY.md). Los enlaces de esta guía no sustituyen los textos que deban acompañar la distribución.
 
 ## Recursos que requieren evidencia
 
@@ -33,3 +33,17 @@ Este cuadro **no es un inventario completo ni una certificación de cumplimiento
 ## Registro que debe completar el mantenedor
 
 Para cada recurso externo: ruta, autor/titular, URL original, versión/fecha obtenida, licencia exacta, evidencia del permiso, obligaciones de atribución y destino en fuente/binario. Si un permiso no puede verificarse, mantenerlo como bloqueo de release y pedir autorización antes de retirarlo o sustituirlo.
+
+## Archivos concretos y alcance actual del paquete
+
+| Archivo | Fuente del repositorio | ZIP Windows según configuración actual | Decisión pendiente |
+| --- | --- | --- | --- |
+| `project_root/assets/sorth.ico` | Incluido | Incluido por `assets` y como icono del ejecutable | Acreditar permiso específico o sustituir por icono propio autorizado. |
+| `project_root/schedule-board.png` | Incluido | No lo añaden `build_exe.ps1` ni `SORTH.spec` | Acreditar permiso de fuente o retirar/sustituir con aprobación. |
+| `project_root/data/input/Cursos_Biologia.xlsx` | Incluido | Incluido por `data/input` | Confirmar derechos y ausencia de datos privados, o sustituir por ejemplo sintético. |
+| `project_root/data/input/courses_config.json` | Incluido | Incluido por `data/input` | Misma revisión que el conjunto de ejemplo. |
+| `project_root/BACHILLERATO EN BIOTECNOLOGIA.pdf` | Incluido | No añadido a los datos del ejecutable | Confirmar permiso de fuente o retirar con aprobación. |
+| `project_root/BACHILLERATO EN BIOLOGÍA CON ÉNFASIS EN BIOLOGIA MARINA.pdf` | Incluido | No añadido a los datos del ejecutable | Confirmar permiso de fuente o retirar con aprobación. |
+| `project_root/BACHILLERATO EN BIOLOGÍA CON ÉNFASIS EN BIOLOGÍA TROPICAL BA-BIOLOG 2021-10.pdf` | Incluido | No añadido a los datos del ejecutable | Confirmar permiso de fuente o retirar con aprobación. |
+
+La tabla se basa en los archivos `--add-data`/`datas` de los scripts, no en una inspección de un binario nuevo. No se han retirado ni relicenciado estos recursos. Los archivos de ejemplo se usan también en pruebas/smoke tests: sustituirlos requiere verificar esos flujos.
