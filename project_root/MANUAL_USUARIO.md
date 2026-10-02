@@ -155,6 +155,20 @@ Haz clic en **Ver Resumen** para ver:
 
 ---
 
+### Consulta y exportación nuevas (cuando se incorpore PR #3)
+
+Esta sección solo corresponde a la versión que incluye [PR #3](https://github.com/RodrigoUC/SORTH/pull/3). Si tu versión muestra **Exportar resultados**, sigue los pasos anteriores. Si muestra **Exportar completo** y **Exportar filtrado (N)**, usa estas instrucciones:
+
+- **Buscar** combina todas las palabras sin distinguir mayúsculas ni acentos. Los filtros compartidos **Aula**, **Día** y **Estado** se aplican a las tres vistas.
+- **Restablecer filtros** vacía Buscar y devuelve Aula, Día y Estado a sus opciones generales.
+- **Exportar completo** y **Ctrl+S** incluyen todas las sesiones asignadas, independientemente de los filtros.
+- **Exportar filtrado (N)** incluye solo las sesiones asignadas que cumplen los filtros compartidos. N indica la cantidad; el diálogo de guardado y el mensaje final también muestran alcance y cantidad.
+- Las sesiones **Sin asignar** se consultan en Lista detallada y no se exportan como filas de horario. Sin coincidencias asignadas, la exportación filtrada no está disponible.
+- Cambiar de pestaña o elegir un aula en el selector local de la cuadrícula no restringe la exportación. Para exportar un aula, usa el filtro compartido **Aula**.
+- Ambas opciones permiten Excel o CSV. Durante la generación o cuando los datos cambian e invalidan el horario, no están disponibles. Cancelar el guardado conserva los filtros y el horario.
+
+---
+
 ## 5. Formato del Excel de entrada
 
 ### Hoja `Aulas`
