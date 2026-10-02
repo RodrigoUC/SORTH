@@ -15,14 +15,17 @@ No recomendar desactivar antivirus, crear exclusiones ni omitir advertencias. Co
 Compilar en Windows desde un entorno virtual limpio, como usuario estándar. Revisar las versiones de Python, dependencias y PyInstaller antes de instalarlas. No reutilizar los ejecutables históricos del repositorio como resultado de una nueva compilación.
 
 ```powershell
+# Python 3.12.10 x64, Windows
 python -m venv .venv-build
-.\.venv-build\Scripts\python.exe -m pip install -r requeriments.txt
-# Seleccionar previamente una versión revisada y compatible de PyInstaller.
-.\.venv-build\Scripts\python.exe -m pip install "pyinstaller==VERSION_REVISADA"
-.\.venv-build\Scripts\python.exe -m pip freeze > build-environment.txt
+.\.venv-build\Scripts\python.exe -m pip install --require-hashes --only-binary=:all: -r requirements-windows.lock
+.\.venv-build\Scripts\python.exe -m pip check
+.\.venv-build\Scripts\python.exe -m pytest -q
+.\.venv-build\Scripts\python.exe tools/build_manual.py --output build/docs/MANUAL_USUARIO.pdf
 ```
 
-`VERSION_REVISADA` es un marcador que debe sustituirse. Las dependencias actuales de `requeriments.txt` todavía no están fijadas: guardar el inventario ayuda a auditar una compilación, pero no hace reproducibles las instalaciones futuras. Un archivo de dependencias bloqueadas, validado en Windows, queda pendiente antes de una distribución estable.
+El lock de Windows fija 29 paquetes transitivos y sus hashes de wheels para CPython 3.12 x64; incluye pruebas, PDF y PyInstaller. `requirements.txt` fija las dependencias directas de ejecución; `requirements-dev.txt` añade pruebas y documentación. `requeriments.txt` conserva el nombre histórico como alias de desarrollo. No instalar el lock de Windows en Linux o macOS.
+
+La resolución de dependencias es reproducible; esto no promete ejecutables idénticos byte por byte ni demuestra ausencia de vulnerabilidades. La imagen `windows-2025` del runner sigue recibiendo actualizaciones. Guardar el inventario y revisar cambios del lock antes de aprobarlos.
 
 ```powershell
 .\build_exe.ps1
@@ -47,7 +50,28 @@ El modo de carpeta facilita inspeccionar las dependencias y evita la extracción
 5. Verificar la firma final con el SDK de Windows: `signtool verify /pa /all /v dist\SORTH\SORTH.exe`. Si se publica sin firma, indicarlo expresamente; no declarar editor verificado. Conservar las firmas de las dependencias de terceros.
 6. Analizar la distribución final con Defender y registrar el resultado y las versiones. Descargar el paquete desde su ubicación de publicación prevista en un Windows limpio para verificar también la experiencia real de SmartScreen. Una prueba local no reproduce necesariamente la reputación de una descarga.
 7. Generar el ZIP después de firmar; calcular y publicar SHA-256 del ZIP final junto con versión, notas y procedencia. Una suma de verificación comprueba integridad, no ausencia de malware. No cambiar los archivos tras calcularla.
-8. Actualizar también los manuales PDF antes de publicar. Los PDF históricos y el EXE/ZIP ya presentes en el repositorio no se regeneran mediante estas correcciones y no validan esta versión.
+8. Generar el manual PDF desde `MANUAL_USUARIO.md` en cada compilación. Los PDF, EXE/ZIP, cachés y la sesión de ejemplo históricos se retiraron del árbol versionado; continúan recuperables en el historial Git y no deben redistribuirse como compilaciones nuevas.
+
+## Compilación de revisión en GitHub Actions
+
+`Windows review build` ejecuta el commit exacto del PR en Windows x64, con permisos de lectura y acciones fijadas a SHA. Instala el lock con verificación de hashes, ejecuta toda la suite, genera el PDF, compila el modo carpeta y abre el ejecutable en Qt offscreen. La prueba importa el Excel incluido, genera en QThread, exporta Excel/CSV, verifica SQLite y captura la ventana, usando una sesión temporal separada.
+
+Después crea un ZIP **sin firma**, `SHA256SUMS.txt`, un inventario con el commit y el manual actual. Los artefactos `SORTH-windows-review-*` y `SORTH-windows-checks-*` se conservan siete días en la ejecución de Actions. Se necesitan permisos de lectura de la ejecución para descargarlos. No se crea una GitHub Release, no se firma, no se despliega y no se modifica la protección de Windows.
+
+Las pruebas automatizadas no sustituyen probar interactivamente en un Windows limpio sin Python, con un usuario estándar y las protecciones activas. En particular, no se presentan como análisis de Defender ni prueba de reputación de descarga SmartScreen.
+
+Para una prueba local aislada, use una carpeta de resultados nueva:
+
+```powershell
+.\dist\SORTH\SORTH.exe --smoke-test --smoke-output C:\Temp\SORTH-review-nueva
+.\.venv-build\Scripts\python.exe tools/package_windows.py --commit (git rev-parse HEAD)
+```
+
+La herramienta de empaquetado rechaza bases de sesión y cachés dentro de la carpeta de la aplicación. La suma de verificación corresponde al ZIP final; `build-info.json` deja explícito que no está firmado.
+
+### Actualizar el lock conscientemente
+
+Descargar wheels para CPython 3.12/Windows x64 desde el índice aprobado, con versiones directas revisadas. Incluir explícitamente `pefile`, `pywin32-ctypes`, `tzdata` y `colorama`: un `pip download --platform` ejecutado en Linux puede evaluar marcadores contra el host. Luego ejecutar `python tools/lock_windows.py --wheel-dir RUTA --output requirements-windows.lock`. El generador comprueba las dependencias con marcadores de Windows y calcula SHA-256 de cada wheel. Revisar el diff y ejecutar el CI de Windows antes de aceptar el nuevo lock.
 
 ## Si aparece una detección
 

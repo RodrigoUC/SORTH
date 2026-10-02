@@ -32,7 +32,7 @@ La comparación de rendimiento excluye lectura de Excel y renderizado de Qt. Los
 
 ## Distribución Windows
 
-Consulte `WINDOWS_DISTRIBUTION.md`. Los EXE, ZIP y PDF históricos del repositorio no se reconstruyeron en Linux y no representan esta versión. No se debe desactivar el antivirus ni añadir exclusiones. Falta compilar, probar y, si corresponde, firmar la nueva distribución en Windows antes de publicarla como ejecutable.
+Consulte `WINDOWS_DISTRIBUTION.md`. Los EXE, ZIP y PDF históricos se retiraron del árbol versionado en la siguiente revisión y permanecen recuperables en Git; no representan una versión actual. El workflow de revisión genera artefactos desde el código y manual vigentes. No se debe desactivar el antivirus ni añadir exclusiones. Falta compilar, probar y, si corresponde, firmar la nueva distribución en Windows antes de publicarla como ejecutable.
 
 ### Resultado de esta revisión
 

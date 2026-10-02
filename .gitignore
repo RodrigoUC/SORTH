@@ -14,3 +14,5 @@ venv/
 project_root/build/
 project_root/dist/
 project_root/data/*.db
+project_root/.venv-build/
+project_root/MANUAL_USUARIO.pdf

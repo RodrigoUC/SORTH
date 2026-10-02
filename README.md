@@ -95,7 +95,7 @@ El proyecto sigue una arquitectura en capas:
 
 ## Distribución
 
-La distribución predeterminada para Windows es una carpeta con `SORTH.exe` y sus dependencias; no requiere instalar Python en el equipo destino. Debe extraerse y conservarse completa. Consulta [Distribución para Windows](project_root/WINDOWS_DISTRIBUTION.md) para compilar, verificar y publicar sin desactivar las protecciones de seguridad.
+La distribución predeterminada para Windows es una carpeta con `SORTH.exe` y sus dependencias; no requiere instalar Python en el equipo destino. Debe extraerse y conservarse completa. Consulta [Distribución para Windows](project_root/WINDOWS_DISTRIBUTION.md) para compilar, verificar y publicar sin desactivar las protecciones de seguridad. El workflow **Windows review build** genera paquetes de revisión sin firma y un manual PDF actualizado como artefactos temporales de Actions; no publica versiones. Los ejecutables y PDF antiguos ya no se guardan en el árbol fuente.
 
 ## Historial de Cambios
 
