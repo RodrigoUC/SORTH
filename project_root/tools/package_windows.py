@@ -10,6 +10,11 @@ import zipfile
 from pathlib import Path
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+LEGAL_FILES = ('LICENSE', 'LICENSING.md', 'CREDITS.md', 'SUPPORT.md', 'SECURITY.md',
+               'docs/LICENSING_REVIEW.md', 'docs/SOURCE_AVAILABILITY.md')
+
+
 FORBIDDEN_SUFFIXES = {'.db', '.sqlite', '.sqlite3', '.pyc'}
 
 
@@ -25,6 +30,12 @@ def package(app_dir: Path, manual: Path, output_dir: Path, commit: str) -> Path:
     for path in files:
         if path.is_symlink() or path.suffix.lower() in FORBIDDEN_SUFFIXES:
             raise ValueError(f'Refusing to package local session/cache data: {path.name}')
+    legal = [REPOSITORY_ROOT / name for name in LEGAL_FILES]
+    legal.extend(sorted(path for path in (REPOSITORY_ROOT / 'third_party').rglob('*') if path.is_file()))
+    if not legal or any(not path.is_file() or path.is_symlink() for path in legal):
+        raise ValueError('Required license/notice files are missing or symlinked.')
+    if not (REPOSITORY_ROOT / 'third_party/wheel-inventory.json').is_file():
+        raise ValueError('Verified third-party wheel inventory is missing.')
     inventory = subprocess.check_output([sys.executable, '-m', 'pip', 'freeze'], text=True)
     info = {
         'source_commit': commit,
@@ -49,6 +60,8 @@ def package(app_dir: Path, manual: Path, output_dir: Path, commit: str) -> Path:
     with zipfile.ZipFile(archive, 'w') as zf:
         for path in files:
             write_member(zf, path.relative_to(app_dir).as_posix(), path.read_bytes())
+        for path in legal:
+            write_member(zf, path.relative_to(REPOSITORY_ROOT).as_posix(), path.read_bytes())
         write_member(zf, 'MANUAL_USUARIO.pdf', manual.read_bytes())
         write_member(zf, 'build-info.json', json.dumps(info, ensure_ascii=False, indent=2).encode('utf-8'))
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()

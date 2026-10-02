@@ -29,6 +29,13 @@ def test_archive_has_current_manual_commit_and_hash(inputs):
     archive = package(app, manual, out, 'a' * 40)
     with zipfile.ZipFile(archive) as zf:
         assert 'SORTH/SORTH.exe' in zf.namelist()
+        assert b'GNU GENERAL PUBLIC LICENSE' in zf.read('SORTH/LICENSE')
+        assert b'GPL-3.0-only' in zf.read('SORTH/LICENSING.md')
+        assert 'SORTH/third_party/wheel-inventory.json' in zf.namelist()
+        assert 'SORTH/third_party/licenses/pyqt6.txt' in zf.namelist()
+        assert 'SORTH/third_party/licenses/cpython-3.12.10.txt' in zf.namelist()
+        assert 'SORTH/third_party/licenses/dejavu-font.txt' in zf.namelist()
+        assert 'SORTH/docs/SOURCE_AVAILABILITY.md' in zf.namelist()
         assert zf.read('SORTH/MANUAL_USUARIO.pdf') == manual.read_bytes()
         info = json.loads(zf.read('SORTH/build-info.json'))
         assert info['source_commit'] == 'a' * 40

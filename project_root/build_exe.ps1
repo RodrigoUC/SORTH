@@ -50,6 +50,9 @@ $baseArgs = @(
     '--add-data', ((Join-Path $PSScriptRoot 'assets') + ';assets'),
     '--add-data', ((Join-Path $PSScriptRoot 'README.md') + ';.'),
     '--add-data', ((Join-Path $PSScriptRoot '../CREDITS.md') + ';.'),
+    '--add-data', ((Join-Path $PSScriptRoot '../LICENSE') + ';.'),
+    '--add-data', ((Join-Path $PSScriptRoot '../LICENSING.md') + ';.'),
+    '--add-data', ((Join-Path $PSScriptRoot '../third_party') + ';third_party'),
     (Join-Path $PSScriptRoot 'gui_app.py')
 )
 
