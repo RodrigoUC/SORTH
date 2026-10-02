@@ -8,6 +8,8 @@ import pandas as pd
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.page import PageMargins
+from openpyxl.worksheet.pagebreak import Break
+from copy import copy
 
 from ..scheduling.schedule_grid import (
     COURSE_COLORS, GRID_TEXT_COLOR, build_schedule_grid, course_color,
@@ -65,7 +67,7 @@ class ScheduleExporter:
     def _detail_dataframe(self, assignments: dict, name_map: dict) -> pd.DataFrame:
         return pd.DataFrame(
             [self._detail_row(gid, value, name_map)
-             for gid, value in sorted(assignments.items())],
+             for gid, value in sorted(assignments.items(), key=self._detail_sort_key)],
             columns=_DETAIL_COLUMNS,
         )
 
@@ -92,7 +94,8 @@ class ScheduleExporter:
     def _write_by_classroom_sheet(self, writer, assignments: dict, name_map: dict):
         # Numeric day indices follow the TimeModel, unlike alphabetical labels.
         ordered = sorted(assignments.items(), key=lambda item: (
-            str(item[1][0]).casefold(), item[1][1], item[1][2], item[1][3], item[0],
+            self._natural_key(item[1][0]), item[1][1], item[1][2], item[1][3],
+            self._natural_key(item[0]), str(item[1][0]), item[0],
         ))
         df = pd.DataFrame(
             [self._detail_row(gid, value, name_map) for gid, value in ordered],
@@ -132,8 +135,9 @@ class ScheduleExporter:
             code: course_color(code) for code in course_codes
         }
         used = {"Asignaciones", "Por Aula"}
-        for classroom in sorted(by_classroom):
-            sheet_name = self._safe_sheet_name(f"Aula {classroom}", used)
+        for classroom in sorted(by_classroom, key=lambda room: (self._natural_key(room), str(room))):
+            room_label = str(classroom) if str(classroom).casefold().startswith("aula ") else f"Aula {classroom}"
+            sheet_name = self._safe_sheet_name(room_label, used)
             used.add(sheet_name)
             self._write_single_grid(
                 writer, sheet_name, classroom, by_classroom[classroom], name_map, course_colors,
@@ -183,6 +187,7 @@ class ScheduleExporter:
                 cell.alignment = center
                 cell.border = _THIN_BORDER
 
+        printable_blocks = []
         for block in grid.blocks:
             day_name = self.time_model.to_day_name(block.day)
             column = days.index(day_name) + 2
@@ -209,14 +214,59 @@ class ScheduleExporter:
                 ws.row_dimensions[block_row].height = min(
                     409, max(ws.row_dimensions[block_row].height, height),
                 )
-            if block.span > 1:
-                ws.merge_cells(start_row=row, start_column=column,
-                               end_row=row + block.span - 1, end_column=column)
+            printable_blocks.append((row, row + block.span - 1, column,
+                                     self._line_count(text, 24) * 14 + 12))
+
+        self._paginate_grid(ws, printable_blocks, first_data_row)
 
         ws.column_dimensions["A"].width = 10
         for column in range(2, n_cols + 1):
             ws.column_dimensions[get_column_letter(column)].width = 27
         self._configure_print(ws, "1:3")
+
+    @staticmethod
+    def _paginate_grid(ws, blocks, first_row):
+        """Keep merged labels inside each printed page, repeating continuations.
+
+        A conservative 400-point body leaves room for repeated headings and
+        margins on landscape A4 even before width scaling. Plan row heights
+        before merging: native spreadsheet engines otherwise cut a merged
+        label at an automatic page boundary.
+        """
+        last_row = ws.max_row
+        start = first_row
+        while start <= last_row:
+            chosen = start
+            chosen_heights = {}
+            for end in range(start, last_row + 1):
+                heights = {row: ws.row_dimensions[row].height or 34
+                           for row in range(start, end + 1)}
+                for top, bottom, _, text_height in blocks:
+                    lo, hi = max(start, top), min(end, bottom)
+                    if lo <= hi:
+                        minimum = min(409, ceil(text_height / (hi - lo + 1)))
+                        for row in range(lo, hi + 1):
+                            heights[row] = max(heights[row], minimum)
+                if sum(heights.values()) > 400 and end > start:
+                    break
+                chosen, chosen_heights = end, heights
+            for row, height in chosen_heights.items():
+                ws.row_dimensions[row].height = height
+            for top, bottom, column, _ in blocks:
+                lo, hi = max(start, top), min(chosen, bottom)
+                if lo > hi:
+                    continue
+                if lo != top:
+                    source, target = ws.cell(top, column), ws.cell(lo, column)
+                    target.value = source.value
+                    target.font = copy(source.font)
+                    target.alignment = copy(source.alignment)
+                if hi > lo:
+                    ws.merge_cells(start_row=lo, start_column=column,
+                                   end_row=hi, end_column=column)
+            if chosen < last_row:
+                ws.row_breaks.append(Break(id=chosen))
+            start = chosen + 1
 
     def _grid_entry_text(self, entry, name_map):
         gid, _, start, end = entry
@@ -266,6 +316,20 @@ class ScheduleExporter:
         value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", value)
         value = value.replace("\r\n", "\n").replace("\r", "\n")
         return "'" + value if unsafe else value
+
+    @staticmethod
+    def _natural_key(value):
+        """Human ordering for numbered courses, groups, and classrooms."""
+        return tuple((1, int(part)) if part.isdigit() else (0, part.casefold())
+                     for part in re.split(r"(\d+)", str(value)))
+
+    def _detail_sort_key(self, item):
+        gid, (classroom, day, start, end) = item
+        code, group = self._group_parts(gid)
+        # Preserve the course/group organization, then show its sessions in
+        # weekly order rather than trusting the part suffix or input order.
+        return (self._natural_key(code), self._natural_key(group), day, start, end,
+                self._natural_key(gid), self._natural_key(classroom), gid)
 
     @staticmethod
     def _group_parts(gid):
