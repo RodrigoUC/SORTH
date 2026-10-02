@@ -1,22 +1,32 @@
-# src/gui/schedule_viewer_widget.py
+"""Read-only schedule consultation with consistent filters and stable row identities."""
+
+import re
+import unicodedata
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem,
                              QLabel, QHeaderView, QTabWidget, QPushButton,
                              QMessageBox, QComboBox, QHBoxLayout, QDialog,
-                             QDialogButtonBox, QGridLayout, QFrame, QMenu,
-                             QLineEdit)
+                             QDialogButtonBox, QFrame, QMenu, QLineEdit)
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QAction
+from PyQt6.QtGui import QColor, QAction
 
 from ..scheduling.time_model import TimeModel
+from ..scheduling.schedule_grid import build_schedule_grid, course_color, COURSE_COLORS, GRID_TEXT_COLOR
 
-_DAY_ORDER = {d: i for i, d in enumerate(
-    ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
-)}
+_DAY_ORDER = {d: i for i, d in enumerate(TimeModel.DAY_ORDER)}
+
+
+def _search_key(text):
+    return "".join(c for c in unicodedata.normalize("NFKD", str(text).casefold())
+                   if not unicodedata.combining(c))
+
+
+def _natural_key(text):
+    return tuple(int(part) if part.isdigit() else part.casefold()
+                 for part in re.split(r"(\d+)", str(text)))
 
 
 class _SortableItem(QTableWidgetItem):
-    """QTableWidgetItem that sorts by a numeric key instead of display text."""
     def __init__(self, text: str, sort_key):
         super().__init__(text)
         self._sort_key = sort_key
@@ -28,633 +38,546 @@ class _SortableItem(QTableWidgetItem):
 
 
 class ScheduleViewerWidget(QWidget):
-
-    # Emitted when user requests to edit a course by code
-    edit_course_requested  = pyqtSignal(str)   # course_code
-    # Emitted when user removes a group from the schedule
-    group_removed          = pyqtSignal(str)   # group_id
-    # Emitted when user clears the entire schedule
-    schedule_cleared       = pyqtSignal()
-    _COLOR_PALETTE = [
-        QColor(76, 175, 80),   QColor(33, 150, 243),  QColor(255, 152, 0),
-        QColor(156, 39, 176),  QColor(244, 67, 54),   QColor(0, 150, 136),
-        QColor(233, 30, 99),   QColor(63, 81, 181),   QColor(255, 87, 34),
-        QColor(103, 58, 183),
-    ]
+    edit_course_requested = pyqtSignal(str)
+    group_removed = pyqtSignal(str)
+    schedule_cleared = pyqtSignal()
+    filters_changed = pyqtSignal()
+    _COLOR_PALETTE = [QColor("#" + color) for color in COURSE_COLORS]
 
     def __init__(self):
         super().__init__()
-        self._classroom_colors: dict[str, QColor] = {}
-        self._course_colors: dict[str, QColor] = {}
-        self._duration_map: dict[str, int] = {}       # group_id → duration_min
-        self._name_map: dict[str, str] = {}           # group_id → course_name
-        self._classroom_assignments: dict[str, list] = {}
-        self._assignments: dict = {}                  # full assignments dict
-        self._gid_by_list_row: dict[int, str] = {}    # list table row → group_id
-        self._gid_by_cls_row: dict[int, str] = {}     # classroom table row → group_id
-        self._time_model: TimeModel | None = None
-        self.summary_data: dict | None = None
+        self._assignments = {}
+        self._known_gids = set()
+        self._name_map = {}
+        self._course_colors = {}
+        self._classroom_assignments = {}
+        self._gid_by_list_row = {}
+        self._gid_by_cls_row = {}
+        self._time_model = None
+        self.summary_data = None
+        self._refreshing = False
         self._init_ui()
+        self._clear()
 
     def _init_ui(self):
-        layout = QVBoxLayout()
-
-        header_layout = QHBoxLayout()
-        title = QLabel("Horario Generado")
-        title.setStyleSheet("font-size: 18px; font-weight: bold;")
-        btn_clear_schedule = QPushButton("🧹 Limpiar Horario")
-        btn_clear_schedule.setToolTip("Eliminar el horario generado actual")
-        btn_clear_schedule.clicked.connect(self._clear_schedule)
-        btn_clear_schedule.setStyleSheet(
-            "QPushButton { background-color: #C62828; color: white; "
-            "padding: 6px 12px; border-radius: 3px; font-weight: bold; }"
-            "QPushButton:hover { background-color: #8E0000; }"
-            "QPushButton:disabled { background-color: #cccccc; color: #666666; }"
-        )
-        btn_clear_schedule.setEnabled(False)
-        self._btn_clear_schedule = btn_clear_schedule
-        btn_summary = QPushButton("📊 Ver Resumen")
-        btn_summary.setToolTip("Ver totales: grupos asignados, aulas utilizadas y cursos programados")
-        btn_summary.clicked.connect(self._show_summary)
-        btn_summary.setStyleSheet(
-            "QPushButton { background-color: #1967D2; color: white; "
-            "padding: 6px 12px; border-radius: 3px; font-weight: bold; }"
-            "QPushButton:hover { background-color: #1565C0; }"
-        )
-        header_layout.addWidget(title)
-        header_layout.addStretch()
-        header_layout.addWidget(btn_clear_schedule)
-        header_layout.addWidget(btn_summary)
-        layout.addLayout(header_layout)
-
-        self.tabs = QTabWidget()
-
-        # Tab 1 — detailed list
-        list_widget = QWidget()
-        list_layout = QVBoxLayout(list_widget)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(6)
+        header = QHBoxLayout()
+        self._summary_label = QLabel()
+        self._summary_label.setWordWrap(True)
+        header.addWidget(self._summary_label, 1)
+        header.addStretch()
+        self._btn_summary = QPushButton("Ver resumen")
+        self._btn_summary.clicked.connect(self._show_summary)
+        header.addWidget(self._btn_summary)
+        self._btn_clear_schedule = QPushButton("Limpiar horario")
+        self._btn_clear_schedule.setToolTip("Eliminar todas las asignaciones del horario actual")
+        self._btn_clear_schedule.clicked.connect(self._clear_schedule)
+        header.addWidget(self._btn_clear_schedule)
+        layout.addLayout(header)
 
         search_row = QHBoxLayout()
         self._list_search = QLineEdit()
-        self._list_search.setPlaceholderText("🔍  Buscar por código o nombre de curso...")
+        self._list_search.setPlaceholderText("Código, nombre de curso, grupo o aula")
+        self._list_search.setAccessibleName("Buscar en todo el horario")
         self._list_search.setClearButtonEnabled(True)
-        self._list_search.setAccessibleName("Buscar en el horario")
-        self._list_search.textChanged.connect(self._filter_list)
-        sort_hint = QLabel("Clic en encabezado para ordenar  •  Clic derecho o botones para editar/eliminar")
-        sort_hint.setWordWrap(True)
-        sort_hint.setStyleSheet("color: #555; font-style: italic; padding: 2px 4px;")
+        self._list_search.textChanged.connect(self._apply_filters)
+        search_label = QLabel("&Buscar:")
+        search_label.setBuddy(self._list_search)
+        search_row.addWidget(search_label)
         search_row.addWidget(self._list_search, 1)
-        search_row.addWidget(sort_hint)
-        list_layout.addLayout(search_row)
-        self.list_table = QTableWidget()
-        self.list_table.setSortingEnabled(True)
-        self.list_table.setAlternatingRowColors(True)
-        self.list_table.verticalHeader().setVisible(False)
-        self.list_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.list_table.customContextMenuRequested.connect(
-            lambda pos: self._show_context_menu(self.list_table, pos, self._gid_by_list_row)
-        )
-        list_btn_row = QHBoxLayout()
-        btn_edit_list = QPushButton("✏️ Editar Curso")
-        btn_edit_list.setToolTip("Editar el curso de la fila seleccionada")
-        btn_edit_list.clicked.connect(lambda: self._action_edit(self.list_table, self._gid_by_list_row))
-        btn_remove_list = QPushButton("🗑️ Eliminar del Horario")
-        btn_remove_list.setToolTip("Quitar este grupo del horario generado")
-        btn_remove_list.clicked.connect(lambda: self._action_remove(self.list_table, self._gid_by_list_row))
-        list_btn_row.addWidget(btn_edit_list)
-        list_btn_row.addWidget(btn_remove_list)
-        list_btn_row.addStretch()
-        list_layout.addWidget(self.list_table)
-        list_layout.addLayout(list_btn_row)
-        list_layout.setContentsMargins(0, 0, 0, 0)
-        self.tabs.addTab(list_widget, "📋 Lista Detallada")
+        self._btn_reset_filters = QPushButton("Restablecer filtros")
+        self._btn_reset_filters.clicked.connect(self._reset_filters)
+        search_row.addWidget(self._btn_reset_filters)
+        layout.addLayout(search_row)
+        # One shared query intentionally serves all three consultation views.
+        self._cls_search = self._list_search
 
+        filters = QHBoxLayout()
+        self._room_filter = self._make_filter(filters, "&Aula:", "Filtrar por aula")
+        self._day_filter = self._make_filter(filters, "&Día:", "Filtrar por día")
+        self._status_filter = self._make_filter(filters, "&Estado:", "Filtrar por estado")
+        self._status_filter.addItem("Todos", "all")
+        self._status_filter.addItem("Asignados", "assigned")
+        self._status_filter.addItem("Sin asignar", "unassigned")
+        filters.addStretch()
+        self._result_label = QLabel()
+        self._result_label.setWordWrap(True)
+        filters.addWidget(self._result_label, 1)
+        layout.addLayout(filters)
 
-        # Tab 2 — grid per classroom
+        self.tabs = QTabWidget()
+        self.list_table, self._btn_edit_list, self._btn_remove_list = self._make_list_tab(
+            "Lista detallada", ["Código", "Nombre del curso", "Grupo / sesión", "Aula",
+                               "Día", "Inicio", "Fin", "Estado"], "Lista detallada del horario")
+
         grid_widget = QWidget()
         grid_layout = QVBoxLayout(grid_widget)
-        sel_layout = QHBoxLayout()
-        sel_layout.addWidget(QLabel("Aula:"))
+        grid_layout.setContentsMargins(0, 8, 0, 0)
+        grid_row = QHBoxLayout()
+        grid_label = QLabel("Aula de la &cuadrícula:")
         self.classroom_selector = QComboBox()
-        self.classroom_selector.setMinimumWidth(220)
-        self.classroom_selector.setToolTip("Seleccionar el aula a visualizar en la cuadrícula")
+        self.classroom_selector.setAccessibleName("Aula de la cuadrícula")
+        self.classroom_selector.setMinimumContentsLength(12)
+        self.classroom_selector.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        grid_label.setBuddy(self.classroom_selector)
         self.classroom_selector.currentTextChanged.connect(self._render_grid)
-        sel_layout.addWidget(self.classroom_selector)
-        sel_layout.addStretch()
+        grid_row.addWidget(grid_label)
+        grid_row.addWidget(self.classroom_selector)
+        self._grid_hint = QLabel()
+        self._grid_hint.setWordWrap(True)
+        grid_row.addWidget(self._grid_hint, 1)
+        grid_layout.addLayout(grid_row)
         self.grid_table = QTableWidget()
-        grid_layout.addLayout(sel_layout)
-        grid_layout.addWidget(self.grid_table)
-        self.tabs.addTab(grid_widget, "📅 Vista de Cuadrícula")
+        self.grid_table.setAccessibleName("Cuadrícula semanal por aula")
+        self.grid_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.grid_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.grid_table.verticalHeader().setVisible(False)
+        self.grid_table.setWordWrap(True)
+        grid_layout.addWidget(self.grid_table, 1)
+        self.tabs.addTab(grid_widget, "Cuadrícula por aula")
 
-        # Tab 3 — by classroom
-        cls_widget = QWidget()
-        cls_layout = QVBoxLayout(cls_widget)
-
-        cls_search_row = QHBoxLayout()
-        self._cls_search = QLineEdit()
-        self._cls_search.setPlaceholderText("🔍  Buscar por aula o grupo...")
-        self._cls_search.textChanged.connect(self._filter_cls)
-        sort_hint2 = QLabel("Clic en encabezado para ordenar  •  Clic derecho o botones para editar/eliminar")
-        sort_hint2.setStyleSheet("color: #555; font-style: italic; padding: 2px 4px;")
-        cls_search_row.addWidget(self._cls_search, 1)
-        cls_search_row.addWidget(sort_hint2)
-        cls_layout.addLayout(cls_search_row)
-        self.classroom_table = QTableWidget()
-        self.classroom_table.setSortingEnabled(True)
-        self.classroom_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.classroom_table.customContextMenuRequested.connect(
-            lambda pos: self._show_context_menu(self.classroom_table, pos, self._gid_by_cls_row)
-        )
-        cls_btn_row = QHBoxLayout()
-        btn_edit_cls = QPushButton("✏️ Editar Curso")
-        btn_edit_cls.setToolTip("Editar el curso de la fila seleccionada")
-        btn_edit_cls.clicked.connect(lambda: self._action_edit(self.classroom_table, self._gid_by_cls_row))
-        btn_remove_cls = QPushButton("🗑️ Eliminar del Horario")
-        btn_remove_cls.setToolTip("Quitar este grupo del horario generado")
-        btn_remove_cls.clicked.connect(lambda: self._action_remove(self.classroom_table, self._gid_by_cls_row))
-        cls_btn_row.addWidget(btn_edit_cls)
-        cls_btn_row.addWidget(btn_remove_cls)
-        cls_btn_row.addStretch()
-        cls_layout.addWidget(sort_hint2)
-        cls_layout.addWidget(self.classroom_table)
-        cls_layout.addLayout(cls_btn_row)
-        cls_layout.setContentsMargins(0, 0, 0, 0)
-        self.tabs.addTab(cls_widget, "🏫 Por Aula")
-
+        self.classroom_table, self._btn_edit_cls, self._btn_remove_cls = self._make_list_tab(
+            "Por aula", ["Aula", "Grupo / sesión", "Nombre del curso", "Día", "Inicio", "Fin"],
+            "Asignaciones ordenadas por aula")
+        self.tabs.currentChanged.connect(self._update_result_label)
         layout.addWidget(self.tabs, 1)
-        self.setLayout(layout)
+        scope = QLabel("Exportar completo incluye todas las asignaciones. Exportar filtrado usa Buscar, Aula, Día y Estado; no el aula de la cuadrícula.")
+        scope.setWordWrap(True)
+        scope.setStyleSheet("color: #526175;")
+        layout.addWidget(scope)
 
-    # ------------------------------------------------------------------
-    # Clear
-    # ------------------------------------------------------------------
+    def _make_filter(self, layout, text, accessible_name):
+        label = QLabel(text)
+        combo = QComboBox()
+        combo.setAccessibleName(accessible_name)
+        combo.setMinimumContentsLength(10)
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        label.setBuddy(combo)
+        layout.addWidget(label)
+        layout.addWidget(combo)
+        combo.currentIndexChanged.connect(self._apply_filters)
+        return combo
+
+    def _make_list_tab(self, label, headers, accessible_name):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 8, 0, 0)
+        table = QTableWidget(0, len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.setAccessibleName(accessible_name)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+        table.setSortingEnabled(True)
+        table.setWordWrap(False)
+        table.horizontalHeader().setMinimumSectionSize(65)
+        table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        table.customContextMenuRequested.connect(lambda pos: self._show_context_menu(table, pos, {}))
+        layout.addWidget(table, 1)
+        actions = QHBoxLayout()
+        edit = QPushButton("Editar curso")
+        edit.setToolTip("Editar el curso de la sesión seleccionada; será necesario generar de nuevo")
+        edit.clicked.connect(lambda: self._action_edit(table, {}))
+        remove = QPushButton("Quitar del horario")
+        remove.setToolTip("Dejar la sesión seleccionada sin asignar")
+        remove.clicked.connect(lambda: self._action_remove(table, {}))
+        actions.addWidget(edit)
+        actions.addWidget(remove)
+        actions.addStretch()
+        hint = QLabel("Seleccione una fila para editar o quitar.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #526175;")
+        actions.addWidget(hint)
+        layout.addLayout(actions)
+        table.itemSelectionChanged.connect(self._update_actions)
+        self.tabs.addTab(page, label)
+        return table, edit, remove
 
     def _clear(self):
-        self.list_table.clear()
-        self.list_table.setRowCount(0)
-        self.grid_table.clear()
-        self.grid_table.setRowCount(0)
-        self.classroom_table.clear()
-        self.classroom_table.setRowCount(0)
-        self.classroom_selector.blockSignals(True)
-        self.classroom_selector.clear()
-        self.classroom_selector.blockSignals(False)
-        self._classroom_colors.clear()
-        self._course_colors.clear()
-        self._duration_map.clear()
-        self._name_map.clear()
-        self._classroom_assignments.clear()
-        self._assignments.clear()
+        self._refreshing = True
+        self._assignments = {}
+        self._known_gids = set()
+        self._name_map = {}
+        self._course_colors = {}
+        self._classroom_assignments = {}
         self._gid_by_list_row.clear()
         self._gid_by_cls_row.clear()
+        self._time_model = None
         self.summary_data = None
+        self.list_table.setRowCount(0)
+        self.classroom_table.setRowCount(0)
+        self.grid_table.clearSpans()
+        self.grid_table.setRowCount(0)
+        self.grid_table.setColumnCount(0)
+        self.classroom_selector.clear()
+        self._room_filter.clear()
+        self._room_filter.addItem("Todas", None)
+        self._day_filter.clear()
+        self._day_filter.addItem("Todos", None)
         self._list_search.clear()
-        self._cls_search.clear()
+        self._status_filter.setCurrentIndex(0)
+        self._refreshing = False
+        self._summary_label.setText("Genere un horario para consultar sus sesiones y exportar los resultados.")
+        self._grid_hint.clear()
+        self._btn_summary.setEnabled(False)
         self._btn_clear_schedule.setEnabled(False)
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+        self._apply_filters()
 
     def display_schedule(self, assignments: dict, time_model: TimeModel,
                          groups=None, course_name_by_code: dict = None):
         self._clear()
-        if not assignments:
-            return
-
-        self._assignments = dict(assignments)
+        self._refreshing = True
         self._time_model = time_model
-        self._btn_clear_schedule.setEnabled(True)
+        self._assignments = dict(assignments or {})
+        groups = list(groups or [])
+        self._known_gids = set(self._assignments) | {g.group_id for g in groups}
         course_name_by_code = course_name_by_code or {}
+        self._name_map = {g.group_id: g.course_name for g in groups if g.course_name}
+        for gid in self._known_gids:
+            self._name_map.setdefault(gid, course_name_by_code.get(self._code(gid), ""))
+        codes = sorted({self._code(gid) for gid in self._known_gids})
+        self._course_colors = {code: QColor("#" + course_color(code))
+                               for code in codes}
+        self._refresh_assignments()
+        for classroom in sorted(self._classroom_assignments, key=_natural_key):
+            self._room_filter.addItem(classroom, classroom)
+        for day in time_model.days:
+            self._day_filter.addItem(day, time_model.to_day_index(day))
+        self._refreshing = False
+        self._display_list(self._assignments, time_model)
+        self._display_classroom_view(self._assignments, time_model)
+        self._display_grid_selector(list(self._classroom_assignments))
+        self._update_summary(self._assignments)
+        self._apply_filters()
 
-        # Build helper maps
-        self._duration_map = {}
-        self._name_map = {}
-        if groups:
-            for g in groups:
-                self._duration_map[g.group_id] = g.duration_min
-                if g.course_name:
-                    self._name_map[g.group_id] = g.course_name
+    @staticmethod
+    def _code(gid):
+        return gid.rsplit("-G", 1)[0]
 
-        for gid in assignments:
-            if gid not in self._name_map:
-                code = gid.rsplit('-G', 1)[0]
-                if code in course_name_by_code and course_name_by_code[code]:
-                    self._name_map[gid] = course_name_by_code[code]
-
-        # Course color map (one color per unique course code)
-        course_codes = sorted(set(gid.rsplit('-G', 1)[0] for gid in assignments))
-        self._course_colors = {
-            code: self._COLOR_PALETTE[i % len(self._COLOR_PALETTE)]
-            for i, code in enumerate(course_codes)
-        }
-
-        # Classroom color map (kept for grid selector label)
-        classrooms = sorted(set(v[0] for v in assignments.values()))
-        self._classroom_colors = {
-            c: self._COLOR_PALETTE[i % len(self._COLOR_PALETTE)]
-            for i, c in enumerate(classrooms)
-        }
-
-        # Group assignments by classroom for grid view
+    def _refresh_assignments(self):
         self._classroom_assignments = {}
-        for gid, (cls, day, start, end) in assignments.items():
-            self._classroom_assignments.setdefault(cls, []).append((gid, day, start, end))
+        for gid, (room, day, start, end) in self._assignments.items():
+            self._classroom_assignments.setdefault(room, []).append((gid, day, start, end))
 
-        unassigned_groups = [g for g in (groups or []) if not g.is_assigned()]
+    def _set_table_rows(self, table, rows, name_col, widths):
+        sort_col = table.horizontalHeader().sortIndicatorSection()
+        sort_order = table.horizontalHeader().sortIndicatorOrder()
+        table.setSortingEnabled(False)
+        table.setRowCount(0)
+        table.setRowCount(len(rows))
+        for row, (gid, values, sort_keys) in enumerate(rows):
+            for col, (value, sort_key) in enumerate(zip(values, sort_keys)):
+                item = _SortableItem(str(value), sort_key)
+                item.setData(Qt.ItemDataRole.UserRole, gid)
+                item.setToolTip(str(value))
+                if gid not in self._assignments:
+                    item.setBackground(QColor("#FCE8E6"))
+                    item.setForeground(QColor("#9F2525"))
+                table.setItem(row, col, item)
+        header = table.horizontalHeader()
+        for col, width in enumerate(widths):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+            table.setColumnWidth(col, width)
+        header.setSectionResizeMode(name_col, QHeaderView.ResizeMode.Stretch)
+        table.setSortingEnabled(True)
+        table.sortItems(max(0, sort_col), sort_order)
+        table.clearSelection()
+        table.setCurrentItem(None)
 
-        self._display_list(assignments, time_model, unassigned_groups, course_name_by_code)
-        self._display_grid_selector(classrooms)
-        self._display_classroom_view(assignments, time_model)
-        self._update_summary(assignments, unassigned_groups)
+    def _display_list(self, assignments, tm, unassigned_groups=None, course_name_by_code=None):
+        rows = []
+        for gid in sorted(self._known_gids, key=_natural_key):
+            assigned = gid in assignments
+            room, day, start, end = assignments.get(gid, ("—", None, None, None))
+            day_name = tm.to_day_name(day) if day is not None else "—"
+            values = [self._code(gid), self._name_map.get(gid, ""), gid, room, day_name,
+                      TimeModel.minutes_to_hhmm(start) if assigned else "—",
+                      TimeModel.minutes_to_hhmm(end) if assigned else "—",
+                      "Asignado" if assigned else "Sin asignar"]
+            keys = [_natural_key(v) for v in values]
+            keys[4:7] = [day if assigned else 999, start if assigned else 9999, end if assigned else 9999]
+            rows.append((gid, values, keys))
+        self._set_table_rows(self.list_table, rows, 1, [90, 230, 135, 90, 105, 75, 75, 100])
+        self._gid_by_list_row = {r: self.list_table.item(r, 0).data(Qt.ItemDataRole.UserRole)
+                                 for r in range(self.list_table.rowCount())}
 
-    # ------------------------------------------------------------------
-    # List view
-    # ------------------------------------------------------------------
+    def _display_classroom_view(self, assignments, tm):
+        rows = []
+        for gid, (room, day, start, end) in assignments.items():
+            values = [room, gid, self._name_map.get(gid, ""), tm.to_day_name(day),
+                      TimeModel.minutes_to_hhmm(start), TimeModel.minutes_to_hhmm(end)]
+            keys = [_natural_key(v) for v in values]
+            # Secondary ordering remains chronological within a classroom.
+            keys[0] = (_natural_key(room), day, start, _natural_key(gid))
+            keys[3:] = [day, start, end]
+            rows.append((gid, values, keys))
+        self._set_table_rows(self.classroom_table, rows, 2, [100, 150, 270, 115, 90, 90])
+        self._gid_by_cls_row = {r: self.classroom_table.item(r, 0).data(Qt.ItemDataRole.UserRole)
+                                for r in range(self.classroom_table.rowCount())}
 
-    def _display_list(self, assignments: dict, tm: TimeModel,
-                       unassigned_groups: list = None, course_name_by_code: dict = None):
-        course_name_by_code = course_name_by_code or {}
-        unassigned_groups = unassigned_groups or []
-
-        total_rows = len(assignments) + len(unassigned_groups)
-        self.list_table.clear()
-        self.list_table.setRowCount(total_rows)
-        self.list_table.setColumnCount(7)
-        self.list_table.setHorizontalHeaderLabels([
-            "Código Curso", "Nombre", "Grupo", "Aula", "Día", "Hora Inicio", "Hora Fin"
-        ])
-
-        red_bg = QColor(255, 205, 210)
-        red_fg = QColor(183, 28, 28)
-
-        self.list_table.setSortingEnabled(False)
-        for row, (gid, (cls, day, start_min, end_min)) in enumerate(sorted(assignments.items())):
-            code = gid.rsplit('-G', 1)[0]
-            display_gid = gid.split('-P', 1)[0]
-            name = self._name_map.get(gid) or course_name_by_code.get(code, "")
-            day_name = tm.to_day_name(day)
-            values = [code, name, display_gid, cls, day_name,
-                      TimeModel.minutes_to_hhmm(start_min),
-                      TimeModel.minutes_to_hhmm(end_min)]
-            for col, val in enumerate(values):
-                if col == 4:  # Día
-                    item = _SortableItem(val, _DAY_ORDER.get(val, 99))
-                elif col in (5, 6):  # Hora Inicio / Hora Fin
-                    item = _SortableItem(val, start_min if col == 5 else end_min)
-                else:
-                    item = QTableWidgetItem(str(val))
-                self.list_table.setItem(row, col, item)
-            self.list_table.item(row, 0).setData(Qt.ItemDataRole.UserRole, gid)
-            self._gid_by_list_row[row] = gid
-
-        for i, g in enumerate(sorted(unassigned_groups, key=lambda g: g.group_id)):
-            row = len(assignments) + i
-            code = g.course_code or g.group_id.rsplit('-G', 1)[0]
-            name = g.course_name or course_name_by_code.get(code, "")
-            display_gid = g.group_id.split('-P', 1)[0]
-            for col, val in enumerate([code, name, display_gid,
-                                        "⚠ Sin asignar", "-", "-", "-"]):
-                item = QTableWidgetItem(str(val))
-                item.setData(Qt.ItemDataRole.UserRole, g.group_id)
-                item.setBackground(red_bg)
-                item.setForeground(red_fg)
-                self.list_table.setItem(row, col, item)
-
-        self.list_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.list_table.setSortingEnabled(True)
-
-    # ------------------------------------------------------------------
-    # Grid view
-    # ------------------------------------------------------------------
-
-    # Grid resolution: 30-minute slots from 07:00 to 22:00
-    _GRID_STEP   = 30          # minutes per row
-    _GRID_START  = 7 * 60      # 420
-    _GRID_END    = TimeModel.DEFAULT_DAY_END
-    _GRID_ROWS   = (_GRID_END - _GRID_START) // _GRID_STEP  # 30
-    _ROW_HEIGHT  = 40          # pixels per 30-min slot
-
-    def _min_to_row(self, minutes: int) -> int:
-        """Convert absolute minutes to grid row index."""
-        return (minutes - self._GRID_START) // self._GRID_STEP
-
-    def _display_grid_selector(self, classrooms: list[str]):
+    def _display_grid_selector(self, classrooms):
         current = self.classroom_selector.currentText()
         self.classroom_selector.blockSignals(True)
         self.classroom_selector.clear()
-        self.classroom_selector.addItems(classrooms)
+        # Retain a selected empty classroom after its final session is removed.
+        # Otherwise a locked global filter would label another room's grid.
+        classrooms = set(classrooms)
+        if self._room_filter.currentData() is not None:
+            classrooms.add(self._room_filter.currentData())
+        self.classroom_selector.addItems(sorted(classrooms, key=_natural_key))
+        if current in classrooms:
+            self.classroom_selector.setCurrentText(current)
         self.classroom_selector.blockSignals(False)
+        self._render_grid(self.classroom_selector.currentText())
 
-        selected = current if current in classrooms else (classrooms[0] if classrooms else "")
-        self.classroom_selector.setCurrentText(selected)
-        self._render_grid(selected)
-
-    def _render_grid(self, classroom: str):
-        if not classroom or not self._time_model:
+    def _render_grid(self, classroom):
+        if self._refreshing or self._time_model is None:
             return
-
-        tm   = self._time_model
-        days = tm.days
-        n_rows = self._GRID_ROWS
-        n_cols = len(days) + 1
-
-        # Reset spans before rebuilding to avoid overlap errors
-        self.grid_table.clearSpans()
-        self.grid_table.clear()
-        self.grid_table.setRowCount(n_rows)
-        self.grid_table.setColumnCount(n_cols)
-        self.grid_table.setHorizontalHeaderLabels(["Hora"] + days)
-
-        color_header = QColor(25, 103, 210)
-        color_hour   = QColor(240, 240, 240)
-        color_empty  = QColor(250, 250, 250)
-        black        = QColor(0, 0, 0)
-        white_text   = QColor(255, 255, 255)
-
-        # --- Hour labels ---
-        for row in range(n_rows):
-            t = self._GRID_START + row * self._GRID_STEP
-            item = QTableWidgetItem(TimeModel.minutes_to_hhmm(t))
-            item.setBackground(color_hour)
-            item.setForeground(black)
-            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            item.setFont(self._font(bold=True, size=8))
-            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            self.grid_table.setItem(row, 0, item)
-
-        # --- Empty cells ---
-        for row in range(n_rows):
-            for col in range(1, n_cols):
-                item = QTableWidgetItem("")
-                item.setBackground(color_empty)
-                item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                self.grid_table.setItem(row, col, item)
-
-        # --- Course blocks ---
-        # Track occupied (row, col) ranges to avoid span overlaps
-        occupied: dict[tuple[int, int], int] = {}  # (row, col) -> last occupied row
-
-        entries = self._classroom_assignments.get(classroom, [])
-        for gid, day, start_min, end_min in sorted(entries, key=lambda e: e[2]):
-            day_name = tm.to_day_name(day)
-            if day_name not in days:
+        tm = self._time_model
+        entries = [entry for entry in self._classroom_assignments.get(classroom, [])
+                   if self._matches_gid(entry[0])]
+        grid = build_schedule_grid(entries, tm.day_start, tm.day_end)
+        table = self.grid_table
+        table.clearSpans()
+        table.clear()
+        table.setRowCount(len(grid.boundaries) - 1)
+        table.setColumnCount(len(tm.days) + 1)
+        table.setHorizontalHeaderLabels(["Hora"] + tm.days)
+        for row, start in enumerate(grid.boundaries[:-1]):
+            item = QTableWidgetItem(TimeModel.minutes_to_hhmm(start))
+            item.setBackground(QColor("#EDF2F8"))
+            item.setForeground(QColor("#33465E"))
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item.setToolTip(f"{TimeModel.minutes_to_hhmm(start)}–{TimeModel.minutes_to_hhmm(grid.boundaries[row + 1])}")
+            table.setItem(row, 0, item)
+            table.setRowHeight(row, max(28, round(42 * (grid.boundaries[row + 1] - start) / 30)))
+        for block in grid.blocks:
+            if block.day not in tm.index_to_day:
                 continue
-            col = days.index(day_name) + 1
+            parts = []
+            for gid, day, start, end in block.entries:
+                parts.append(f"{gid}\n"
+                             f"{TimeModel.minutes_to_hhmm(start)}–{TimeModel.minutes_to_hhmm(end)}\n"
+                             f"{self._name_map.get(gid, '')}")
+            conflict = len(block.entries) > 1
+            text = ("Conflicto de aula\n" if conflict else "") + "\n\n".join(parts)
+            item = QTableWidgetItem(text)
+            item.setToolTip(text)
+            item.setData(Qt.ItemDataRole.UserRole, tuple(entry[0] for entry in block.entries))
+            item.setBackground(QColor("#FCE8E6") if conflict else
+                               self._course_colors[self._code(block.entries[0][0])])
+            item.setForeground(QColor("#9F2525") if conflict else QColor("#" + GRID_TEXT_COLOR))
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            col = tm.days.index(tm.to_day_name(block.day)) + 1
+            table.setItem(block.row, col, item)
+            if block.span > 1:
+                table.setSpan(block.row, col, block.span, 1)
+            # Short sessions still need room for their exact time and course label.
+            minimum = min(180, 66 * len(block.entries))
+            height = sum(table.rowHeight(r) for r in range(block.row, block.row + block.span))
+            if height < minimum:
+                table.setRowHeight(block.row, table.rowHeight(block.row) + minimum - height)
+        header = table.horizontalHeader()
+        header.setMinimumSectionSize(65)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        table.setColumnWidth(0, 65)
+        for col in range(1, table.columnCount()):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
+            day = tm.to_day_index(tm.days[col - 1])
+            table.setColumnHidden(col, self._day_filter.currentData() not in (None, day))
+        conflicts = sum(len(block.entries) > 1 for block in grid.blocks)
+        if entries:
+            suffix = f" · {conflicts} tramo(s) con conflicto" if conflicts else ""
+            self._grid_hint.setText(f"{len(entries)} sesiones{suffix}. Horas exactas en cada bloque; detalle completo al señalarlo.")
+        else:
+            self._grid_hint.setText("Sin sesiones para esta aula y estos filtros.")
+        self._update_result_label()
 
-            start_row = self._min_to_row(start_min)
-            duration  = end_min - start_min
-            span      = max(1, (duration + self._GRID_STEP - 1) // self._GRID_STEP)
+    def _matches_gid(self, gid):
+        assignment = self._assignments.get(gid)
+        status = self._status_filter.currentData()
+        if status == "assigned" and assignment is None:
+            return False
+        if status == "unassigned" and assignment is not None:
+            return False
+        room, day = self._room_filter.currentData(), self._day_filter.currentData()
+        if room is not None and (assignment is None or assignment[0] != room):
+            return False
+        if day is not None and (assignment is None or assignment[1] != day):
+            return False
+        query = _search_key(self._list_search.text().strip())
+        searchable = " ".join((gid, self._name_map.get(gid, ""), assignment[0] if assignment else ""))
+        return all(word in _search_key(searchable) for word in query.split())
 
-            if start_row < 0 or start_row >= n_rows:
-                continue
-            span = min(span, n_rows - start_row)
-
-            # Shrink span if it would overlap an already-placed block
-            for r in range(start_row, start_row + span):
-                if (r, col) in occupied:
-                    span = r - start_row
-                    break
-            if span < 1:
-                continue
-
-            # Mark rows as occupied
-            for r in range(start_row, start_row + span):
-                occupied[(r, col)] = 1
-
-            code      = gid.rsplit('-G', 1)[0]
-            group_num = gid.split('-P', 1)[0].rsplit('-G', 1)[1]
-            name      = self._name_map.get(gid, "")
-            time_lbl  = f"{TimeModel.minutes_to_hhmm(start_min)}–{TimeModel.minutes_to_hhmm(end_min)}"
-            cell_text = f"{code}\n{name}\nG{group_num}\n{time_lbl}" if name else f"{code}\nG{group_num}\n{time_lbl}"
-
-            course_color = self._course_colors.get(code, self._COLOR_PALETTE[0])
-            item = QTableWidgetItem(cell_text)
-            item.setBackground(course_color)
-            item.setForeground(black)
-            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-            item.setFont(self._font(size=8))
-            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            self.grid_table.setItem(start_row, col, item)
-            if span > 1:
-                self.grid_table.setSpan(start_row, col, span, 1)
-
-        # --- Sizing ---
-        hdr = self.grid_table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self.grid_table.setColumnWidth(0, 55)
-        for c in range(1, n_cols):
-            hdr.setSectionResizeMode(c, QHeaderView.ResizeMode.Stretch)
-
-        for i in range(self.grid_table.columnCount()):
-            h = self.grid_table.horizontalHeaderItem(i)
-            if h:
-                h.setBackground(color_header)
-                h.setForeground(white_text)
-                h.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
-                h.setFont(self._font(bold=True))
-
-        self.grid_table.verticalHeader().setVisible(False)
-        for row in range(n_rows):
-            self.grid_table.setRowHeight(row, self._ROW_HEIGHT)
-
-    # ------------------------------------------------------------------
-    # Classroom view
-    # ------------------------------------------------------------------
-
-    def _display_classroom_view(self, assignments: dict, tm: TimeModel):
-        rows_data = []
-        for gid, (cls, day, start_min, end_min) in assignments.items():
-            rows_data.append((cls, gid, tm.to_day_name(day), start_min, end_min))
-        rows_data.sort(key=lambda x: (x[0], x[2], x[3]))
-
-        self.classroom_table.clear()
-        self.classroom_table.setRowCount(len(rows_data))
-        self.classroom_table.setColumnCount(5)
-        self.classroom_table.setHorizontalHeaderLabels([
-            "Aula", "Grupo", "Día", "Hora Inicio", "Hora Fin"
-        ])
-        self.classroom_table.setSortingEnabled(False)
-
-        for row, (cls, gid, day_name, start_min, end_min) in enumerate(rows_data):
-            self.classroom_table.setItem(row, 0, QTableWidgetItem(cls))
-            self.classroom_table.setItem(row, 1, QTableWidgetItem(gid.split('-P', 1)[0]))
-            self.classroom_table.setItem(row, 2, _SortableItem(day_name, _DAY_ORDER.get(day_name, 99)))
-            self.classroom_table.setItem(row, 3, _SortableItem(TimeModel.minutes_to_hhmm(start_min), start_min))
-            self.classroom_table.setItem(row, 4, _SortableItem(TimeModel.minutes_to_hhmm(end_min), end_min))
-            self.classroom_table.item(row, 0).setData(Qt.ItemDataRole.UserRole, gid)
-            self._gid_by_cls_row[row] = gid
-
-        self.classroom_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.classroom_table.setSortingEnabled(True)
-
-    # ------------------------------------------------------------------
-    # Search / filter
-    # ------------------------------------------------------------------
-
-    def _clear_schedule(self):
-        if not self._assignments:
+    def _apply_filters(self, *_):
+        if self._refreshing or not hasattr(self, "classroom_table"):
             return
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Limpiar horario")
-        dlg.setMinimumWidth(500)
-        outer = QVBoxLayout()
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-        hdr = QLabel("  ⚠️  Limpiar horario")
-        hdr.setStyleSheet("background-color:#C62828;color:#FFF;font-size:12pt;"
-                          "font-weight:bold;padding:14px 20px;")
-        outer.addWidget(hdr)
-        body_w = QWidget()
-        bl = QVBoxLayout(body_w)
-        bl.setContentsMargins(28, 20, 28, 20)
-        bl.setSpacing(20)
-        lbl = QLabel("¿Eliminar el horario generado actual?\nEsta acción no se puede deshacer.")
-        lbl.setStyleSheet("font-size: 11pt;")
-        bl.addWidget(lbl)
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Yes |
-                                QDialogButtonBox.StandardButton.No)
-        btns.accepted.connect(dlg.accept)
-        btns.rejected.connect(dlg.reject)
-        bl.addWidget(btns)
-        outer.addWidget(body_w)
-        dlg.setLayout(outer)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._clear()
-            self.schedule_cleared.emit()
+        for table in (self.list_table, self.classroom_table):
+            for row in range(table.rowCount()):
+                item = table.item(row, 0)
+                table.setRowHidden(row, not self._matches_gid(item.data(Qt.ItemDataRole.UserRole)))
+            if table.currentRow() >= 0 and table.isRowHidden(table.currentRow()):
+                table.clearSelection()
+                table.setCurrentItem(None)
+        room = self._room_filter.currentData()
+        self.classroom_selector.setEnabled(room is None and bool(self._assignments))
+        if room is not None:
+            self.classroom_selector.blockSignals(True)
+            self.classroom_selector.setCurrentText(room)
+            self.classroom_selector.blockSignals(False)
+        self._render_grid(self.classroom_selector.currentText())
+        self._btn_reset_filters.setEnabled(bool(self._list_search.text()) or
+                                           any(combo.currentIndex() > 0 for combo in
+                                               (self._room_filter, self._day_filter, self._status_filter)))
+        self._update_actions()
+        self._update_result_label()
+        self.filters_changed.emit()
 
-    def _filter_list(self, text: str):
-        text = text.strip().lower()
-        for row in range(self.list_table.rowCount()):
-            match = False
-            for col in (0, 1):  # code, name
-                item = self.list_table.item(row, col)
-                if item and text in item.text().lower():
-                    match = True
-                    break
-            self.list_table.setRowHidden(row, not match if text else False)
+    def filtered_assignments(self):
+        """A copy of assigned sessions matching the shared consultation filters.
 
-    def _filter_cls(self, text: str):
-        text = text.strip().lower()
-        for row in range(self.classroom_table.rowCount()):
-            aula  = self.classroom_table.item(row, 0)
-            grupo = self.classroom_table.item(row, 1)
-            match = (
-                (aula  and text in aula.text().lower()) or
-                (grupo and text in grupo.text().lower())
-            )
-            self.classroom_table.setRowHidden(row, not match if text else False)
+        The grid's local classroom selector and current tab do not narrow this
+        scope. Use the shared Aula filter when exporting a single classroom.
+        """
+        return {gid: value for gid, value in self._assignments.items()
+                if self._matches_gid(gid)}
 
-    # ------------------------------------------------------------------
-    # Context menu (edit / remove)
-    # ------------------------------------------------------------------
+    def _filter_list(self, text):
+        self._list_search.setText(text)
+        self._apply_filters()
 
-    def _show_context_menu(self, table: QTableWidget, pos, gid_map: dict):
+    def _filter_cls(self, text):
+        self._filter_list(text)
+
+    def _reset_filters(self):
+        self._refreshing = True
+        self._list_search.clear()
+        for combo in (self._room_filter, self._day_filter, self._status_filter):
+            combo.setCurrentIndex(0)
+        self._refreshing = False
+        self._apply_filters()
+        self._list_search.setFocus()
+
+    def _update_result_label(self, *_):
+        if not hasattr(self, "classroom_table"):
+            return
+        index = self.tabs.currentIndex()
+        if index == 1:
+            room = self.classroom_selector.currentText()
+            visible = sum(self._matches_gid(gid) and data[0] == room for gid, data in self._assignments.items())
+            total = len(self._assignments)
+        else:
+            table = self.list_table if index == 0 else self.classroom_table
+            visible = sum(not table.isRowHidden(r) for r in range(table.rowCount()))
+            total = table.rowCount()
+        text = f"Mostrando {visible} de {total} sesiones"
+        if total and not visible:
+            text += ". No hay coincidencias; cambie o restablezca los filtros."
+        if index != 0 and self._status_filter.currentData() == "unassigned":
+            text += " Consulte las sesiones sin asignar en Lista detallada."
+        self._result_label.setText(text)
+
+    @staticmethod
+    def _selected_gid(table):
+        row = table.currentRow()
+        if row < 0 or table.isRowHidden(row) or not table.selectedItems():
+            return None
+        item = table.item(row, 0)
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def _update_actions(self):
+        if not hasattr(self, "_btn_edit_cls"):
+            return
+        for table, edit, remove in ((self.list_table, self._btn_edit_list, self._btn_remove_list),
+                                    (self.classroom_table, self._btn_edit_cls, self._btn_remove_cls)):
+            gid = self._selected_gid(table)
+            edit.setEnabled(gid is not None)
+            remove.setEnabled(gid in self._assignments if gid else False)
+
+    def _show_context_menu(self, table, pos, gid_map):
         row = table.rowAt(pos.y())
         if row < 0:
             return
-        item = table.item(row, 0)
-        gid = item.data(Qt.ItemDataRole.UserRole) if item else None
+        table.setCurrentCell(row, 0)
+        gid = self._selected_gid(table)
         if not gid:
             return
-        code = gid.rsplit('-G', 1)[0]
-
         menu = QMenu(self)
-        act_edit   = QAction(f"✏️  Editar curso {code}", self)
-        act_remove = QAction(f"🗑️  Eliminar grupo del horario", self)
-        menu.addAction(act_edit)
-        menu.addSeparator()
-        menu.addAction(act_remove)
-
-        act_edit.triggered.connect(lambda: self.edit_course_requested.emit(code))
-        act_remove.triggered.connect(lambda: self._remove_group(gid))
+        edit = QAction(f"Editar curso {self._code(gid)}", menu)
+        remove = QAction("Quitar del horario", menu)
+        remove.setEnabled(gid in self._assignments)
+        edit.triggered.connect(lambda: self.edit_course_requested.emit(self._code(gid)))
+        remove.triggered.connect(lambda: self._confirm_remove_group(gid))
+        menu.addAction(edit)
+        menu.addAction(remove)
         menu.exec(table.viewport().mapToGlobal(pos))
 
-    def _action_edit(self, table: QTableWidget, gid_map: dict):
-        row = table.currentRow()
-        if row < 0:
-            QMessageBox.information(self, "Info", "Selecciona una fila primero.")
-            return
-        item = table.item(row, 0)
-        gid = item.data(Qt.ItemDataRole.UserRole) if item else None
+    def _action_edit(self, table, gid_map):
+        gid = self._selected_gid(table)
         if gid:
-            self.edit_course_requested.emit(gid.rsplit('-G', 1)[0])
+            self.edit_course_requested.emit(self._code(gid))
 
-    def _action_remove(self, table: QTableWidget, gid_map: dict):
-        row = table.currentRow()
-        if row < 0:
-            QMessageBox.information(self, "Info", "Selecciona una fila primero.")
-            return
-        item = table.item(row, 0)
-        gid = item.data(Qt.ItemDataRole.UserRole) if item else None
-        if gid:
+    def _action_remove(self, table, gid_map):
+        gid = self._selected_gid(table)
+        if gid in self._assignments:
+            self._confirm_remove_group(gid)
+
+    def _confirm_remove_group(self, gid):
+        answer = QMessageBox.question(self, "Quitar sesión del horario",
+                                      f"¿Quitar {gid} del horario?\nLa sesión quedará sin asignar y no se exportará.",
+                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                      QMessageBox.StandardButton.No)
+        if answer == QMessageBox.StandardButton.Yes:
             self._remove_group(gid)
 
-    def _remove_group(self, gid: str):
+    def _remove_group(self, gid):
         if gid not in self._assignments:
             return
-        cls_name = self._assignments[gid][0]
         del self._assignments[gid]
         self.group_removed.emit(gid)
+        self._refresh_assignments()
+        self._display_list(self._assignments, self._time_model)
+        self._display_classroom_view(self._assignments, self._time_model)
+        self._display_grid_selector(list(self._classroom_assignments))
+        self._update_summary(self._assignments)
+        self._apply_filters()
 
-        # Update classroom assignments map
-        if cls_name in self._classroom_assignments:
-            self._classroom_assignments[cls_name] = [
-                e for e in self._classroom_assignments[cls_name] if e[0] != gid
-            ]
+    def _clear_schedule(self):
+        if not self._known_gids:
+            return
+        answer = QMessageBox.question(self, "Limpiar horario",
+                                      "¿Eliminar todas las asignaciones del horario actual?\n"
+                                      "Se conservarán los cursos y las aulas para generar un horario nuevo.",
+                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                      QMessageBox.StandardButton.No)
+        if answer == QMessageBox.StandardButton.Yes:
+            self._clear()
+            self.schedule_cleared.emit()
 
-        # Refresh all views
-        if self._time_model:
-            self._display_list(self._assignments, self._time_model, [], {})
-            self._display_classroom_view(self._assignments, self._time_model)
-            self._render_grid(self.classroom_selector.currentText())
-            self._update_summary(self._assignments, [])
-
-    # ------------------------------------------------------------------
-    # Summary
-    # ------------------------------------------------------------------
-
-    def _update_summary(self, assignments: dict, unassigned_groups: list = None):
-        unassigned = unassigned_groups or []
-        # Per-classroom load
-        cls_load: dict[str, int] = {}
-        for cls, _, _, _ in assignments.values():
-            cls_load[cls] = cls_load.get(cls, 0) + 1
-
-        # Per-day load
-        day_load: dict[str, int] = {}
-        if self._time_model:
-            for _, day, _, _ in assignments.values():
-                name = self._time_model.to_day_name(day)
-                day_load[name] = day_load.get(name, 0) + 1
-
+    def _update_summary(self, assignments, unassigned_groups=None):
+        unassigned = self._known_gids - assignments.keys()
+        cls_load, day_load = {}, {}
+        for room, day, _, _ in assignments.values():
+            cls_load[room] = cls_load.get(room, 0) + 1
+            name = self._time_model.to_day_name(day)
+            day_load[name] = day_load.get(name, 0) + 1
         self.summary_data = {
-            "total":       len(assignments),
-            "unassigned":  len(unassigned),
-            "classrooms":  len(cls_load),
-            "courses":     len(set(gid.rsplit('-G', 1)[0] for gid in assignments)),
-            "cls_load":    cls_load,
-            "day_load":    day_load,
-            "unassigned_list": [(g.course_code or g.group_id.rsplit('-G',1)[0],
-                                  g.course_name or "",
-                                  g.group_id.split('-P',1)[0])
-                                 for g in sorted(unassigned, key=lambda g: g.group_id)],
-        }
+            "total": len(assignments), "unassigned": len(unassigned),
+            "classrooms": len(cls_load), "courses": len({self._code(gid) for gid in assignments}),
+            "cls_load": cls_load, "day_load": day_load,
+            "unassigned_list": [(self._code(gid), self._name_map.get(gid, ""), gid)
+                                 for gid in sorted(unassigned, key=_natural_key)]}
+        self._summary_label.setText(f"{len(assignments)} sesiones asignadas · {len(unassigned)} sin asignar · "
+                                    f"{len(cls_load)} aulas utilizadas")
+        self._btn_summary.setEnabled(bool(self._known_gids))
+        self._btn_clear_schedule.setEnabled(bool(self._known_gids))
 
     def _show_summary(self):
-        if not self.summary_data:
-            QMessageBox.information(self, "Info", "No hay horario generado aún.")
-            return
-        d = self.summary_data
-        dlg = SummaryDialog(self, d)
-        dlg.exec()
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    def _font(self, bold: bool = False, size: int = 10) -> QFont:
-        f = QFont("Arial", size)
-        f.setBold(bold)
-        return f
+        if self.summary_data:
+            SummaryDialog(self, self.summary_data).exec()
 
 
 class SummaryDialog(QDialog):
@@ -680,7 +603,7 @@ class SummaryDialog(QDialog):
         pct        = int(assigned / total * 100) if total else 0
 
         for label, value, color in [
-            ("Grupos asignados",  f"{assigned} / {total}  ({pct}%)", "#2E7D32"),
+            ("Sesiones asignadas",  f"{assigned} / {total}  ({pct}%)", "#2E7D32"),
             ("Sin asignar",       str(unassigned),                   "#B71C1C" if unassigned else "#2E7D32"),
             ("Aulas utilizadas",  str(self._data["classrooms"]),     "#1565C0"),
             ("Cursos programados",str(self._data["courses"]),        "#6A1B9A"),
@@ -704,23 +627,23 @@ class SummaryDialog(QDialog):
 
         # --- Load by day ---
         if self._data.get("day_load"):
-            layout.addWidget(self._section_label("Grupos por día"))
-            day_table = self._make_table(["Día", "Grupos asignados"],
-                                         sorted(self._data["day_load"].items()))
+            layout.addWidget(self._section_label("Sesiones por día"))
+            day_table = self._make_table(["Día", "Sesiones asignadas"],
+                                         sorted(self._data["day_load"].items(), key=lambda item: _DAY_ORDER.get(item[0], 99)))
             layout.addWidget(day_table)
 
         # --- Load by classroom ---
         if self._data.get("cls_load"):
-            layout.addWidget(self._section_label("Grupos por aula"))
+            layout.addWidget(self._section_label("Sesiones por aula"))
             cls_table = self._make_table(
-                ["Aula", "Grupos asignados"],
+                ["Aula", "Sesiones asignadas"],
                 sorted(self._data["cls_load"].items(), key=lambda x: -x[1])
             )
             layout.addWidget(cls_table)
 
         # --- Unassigned groups ---
         if self._data.get("unassigned_list"):
-            lbl = self._section_label("⚠ Grupos sin asignar (ver Lista Detallada en rojo)")
+            lbl = self._section_label("Sesiones sin asignar (ver Lista detallada)")
             lbl.setStyleSheet("font-weight: bold; color: #B71C1C;")
             layout.addWidget(lbl)
             ua_table = self._make_table(

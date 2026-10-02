@@ -1,51 +1,51 @@
-# src/infrastructure/schedule_exporter.py
+"""Readable, print-ready schedule exports with stable tabular contracts."""
+
+from math import ceil
+from pathlib import Path
+import re
 
 import pandas as pd
-from pathlib import Path
-from typing import Dict
-
-from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.page import PageMargins
 
+from ..scheduling.schedule_grid import (
+    COURSE_COLORS, GRID_TEXT_COLOR, build_schedule_grid, course_color,
+)
 from ..scheduling.time_model import TimeModel
 
 
-_COLOR_PALETTE = [
-    "4CAF50", "2196F3", "FF9800", "9C27B0", "F44336",
-    "009688", "E91E63", "3F51B5", "FF5722", "673AB7",
+_DETAIL_COLUMNS = [
+    "Código Curso", "Nombre Curso", "Grupo", "Aula", "Día", "Hora Inicio", "Hora Fin",
 ]
-
-_HEADER_FILL  = PatternFill(start_color="1967D2", end_color="1967D2", fill_type="solid")
-_HEADER_FONT  = Font(bold=True, color="FFFFFF", size=11)
+_CLASSROOM_COLUMNS = [
+    "Aula", "Código Curso", "Nombre Curso", "Grupo", "Día", "Hora Inicio", "Hora Fin",
+]
+_COLOR_PALETTE = COURSE_COLORS
+_HEADER_FILL = PatternFill("solid", fgColor="1967D2")
+_HEADER_FONT = Font(name="Calibri", bold=True, color="FFFFFF", size=11)
 _HEADER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
-_HOUR_FILL    = PatternFill(start_color="F0F0F0", end_color="F0F0F0", fill_type="solid")
-_THIN_BORDER  = Border(
-    left=Side(style="thin"), right=Side(style="thin"),
-    top=Side(style="thin"),  bottom=Side(style="thin"),
+_HOUR_FILL = PatternFill("solid", fgColor="EDF2F7")
+_EMPTY_FILL = PatternFill("solid", fgColor="FAFCFE")
+_STRIPE_FILL = PatternFill("solid", fgColor="F2F6FB")
+_CONFLICT_FILL = PatternFill("solid", fgColor="FCE4D6")
+_THIN_BORDER = Border(
+    left=Side(style="thin", color="D7E0E9"),
+    right=Side(style="thin", color="D7E0E9"),
+    top=Side(style="thin", color="D7E0E9"),
+    bottom=Side(style="thin", color="D7E0E9"),
 )
-
-# Grid constants (must match schedule_viewer_widget)
-_GRID_STEP  = 30
-_GRID_START = 7 * 60
-_GRID_END   = 22 * 60
-_GRID_ROWS  = (_GRID_END - _GRID_START) // _GRID_STEP
 
 
 class ScheduleExporter:
-
     def __init__(self, time_model: TimeModel):
         self.time_model = time_model
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     def to_excel(self, assignments: dict, output_path: str,
                  groups=None, course_name_by_code: dict = None,
                  include_grid: bool = True) -> None:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         name_map = self._build_name_map(assignments, groups, course_name_by_code)
-
         with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
             if include_grid:
                 self._write_grid_sheets(writer, assignments, name_map)
@@ -56,216 +56,246 @@ class ScheduleExporter:
                groups=None, course_name_by_code: dict = None) -> None:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         name_map = self._build_name_map(assignments, groups, course_name_by_code)
-        df = self._detail_dataframe(assignments, name_map)
-        df.to_csv(output_path, index=False, encoding="utf-8-sig")
+        self._detail_dataframe(assignments, name_map).to_csv(
+            output_path, index=False, encoding="utf-8-sig",
+        )
 
-    # ------------------------------------------------------------------
-    # Detail sheet
-    # ------------------------------------------------------------------
+    # The seven column names/order and minute strings are kept for downstream
+    # consumers. Explicit columns also make an empty export a usable template.
+    def _detail_dataframe(self, assignments: dict, name_map: dict) -> pd.DataFrame:
+        return pd.DataFrame(
+            [self._detail_row(gid, value, name_map)
+             for gid, value in sorted(assignments.items())],
+            columns=_DETAIL_COLUMNS,
+        )
+
+    def _detail_row(self, gid, value, name_map):
+        classroom, day, start_min, end_min = value
+        code, group_num = self._group_parts(gid)
+        row = {
+            "Código Curso": code,
+            "Nombre Curso": name_map.get(gid, ""),
+            "Grupo": f"{code}-G{group_num}",
+            "Aula": classroom,
+            "Día": self.time_model.to_day_name(day),
+            "Hora Inicio": TimeModel.minutes_to_hhmm(start_min),
+            "Hora Fin": TimeModel.minutes_to_hhmm(end_min),
+        }
+        return {key: self._safe_text(value) for key, value in row.items()}
 
     def _write_detail_sheet(self, writer, assignments: dict, name_map: dict):
-        df = self._detail_dataframe(assignments, name_map)
-        df.to_excel(writer, sheet_name="Asignaciones", index=False)
-        ws = writer.sheets["Asignaciones"]
-        for cell in ws[1]:
-            cell.fill = _HEADER_FILL
-            cell.font = _HEADER_FONT
-            cell.alignment = _HEADER_ALIGN
-        widths = [14, 35, 14, 14, 14, 12, 12]
-        for i, w in enumerate(widths, 1):
-            ws.column_dimensions[get_column_letter(i)].width = w
-
-    def _detail_dataframe(self, assignments: dict, name_map: dict) -> pd.DataFrame:
-        rows = []
-        for gid, (cls, day, start_min, end_min) in sorted(assignments.items()):
-            code = gid.rsplit("-G", 1)[0]
-            group_num = gid.split("-P", 1)[0].rsplit("-G", 1)[1]
-            rows.append({
-                "Código Curso":  code,
-                "Nombre Curso":  name_map.get(gid, ""),
-                "Grupo":         f"{code}-G{group_num}",
-                "Aula":          cls,
-                "Día":           self.time_model.to_day_name(day),
-                "Hora Inicio":   TimeModel.minutes_to_hhmm(start_min),
-                "Hora Fin":      TimeModel.minutes_to_hhmm(end_min),
-            })
-        return pd.DataFrame(rows)
-
-    # ------------------------------------------------------------------
-    # By-classroom sheet
-    # ------------------------------------------------------------------
+        self._detail_dataframe(assignments, name_map).to_excel(
+            writer, sheet_name="Asignaciones", index=False,
+        )
+        self._style_table(writer.sheets["Asignaciones"], [18, 44, 20, 18, 16, 14, 14])
 
     def _write_by_classroom_sheet(self, writer, assignments: dict, name_map: dict):
-        rows = []
-        for gid, (cls, day, start_min, end_min) in assignments.items():
-            code = gid.rsplit("-G", 1)[0]
-            group_num = gid.split("-P", 1)[0].rsplit("-G", 1)[1]
-            rows.append({
-                "Aula":         cls,
-                "Código Curso": code,
-                "Nombre Curso": name_map.get(gid, ""),
-                "Grupo":        f"{code}-G{group_num}",
-                "Día":          self.time_model.to_day_name(day),
-                "Hora Inicio":  TimeModel.minutes_to_hhmm(start_min),
-                "Hora Fin":     TimeModel.minutes_to_hhmm(end_min),
-            })
-        rows.sort(key=lambda r: (r["Aula"], r["Día"], r["Hora Inicio"]))
-        df = pd.DataFrame(rows)
+        # Numeric day indices follow the TimeModel, unlike alphabetical labels.
+        ordered = sorted(assignments.items(), key=lambda item: (
+            str(item[1][0]).casefold(), item[1][1], item[1][2], item[1][3], item[0],
+        ))
+        df = pd.DataFrame(
+            [self._detail_row(gid, value, name_map) for gid, value in ordered],
+            columns=_CLASSROOM_COLUMNS,
+        )
         df.to_excel(writer, sheet_name="Por Aula", index=False)
-        ws = writer.sheets["Por Aula"]
+        self._style_table(writer.sheets["Por Aula"], [18, 18, 44, 20, 16, 14, 14])
+
+    def _style_table(self, ws, widths):
+        ws.sheet_view.showGridLines = False
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
         for cell in ws[1]:
-            cell.fill = _HEADER_FILL
-            cell.font = _HEADER_FONT
-            cell.alignment = _HEADER_ALIGN
-        for i, w in enumerate([14, 14, 35, 14, 14, 12, 12], 1):
-            ws.column_dimensions[get_column_letter(i)].width = w
+            self._style_header(cell)
+        ws.row_dimensions[1].height = 30
+        for column, width in enumerate(widths, 1):
+            ws.column_dimensions[get_column_letter(column)].width = width
+        for row in ws.iter_rows(min_row=2):
+            max_lines = 1
+            for cell, width in zip(row, widths):
+                cell.font = Font(name="Calibri", size=11, color=GRID_TEXT_COLOR)
+                cell.alignment = Alignment(vertical="center", wrap_text=True)
+                cell.number_format = "@"
+                if cell.row % 2 == 0:
+                    cell.fill = _STRIPE_FILL
+                max_lines = max(max_lines, self._line_count(cell.value, width - 2))
+            ws.row_dimensions[row[0].row].height = min(409, max(27, max_lines * 15 + 10))
+        self._configure_print(ws, "1:1")
 
-    # ------------------------------------------------------------------
-    # Grid sheets (one per classroom)
-    # ------------------------------------------------------------------
-
+    # One visual sheet per classroom, with exact-minute row boundaries.
     def _write_grid_sheets(self, writer, assignments: dict, name_map: dict):
-        # Group by classroom
-        by_cls: dict[str, list] = {}
-        for gid, (cls, day, start_min, end_min) in assignments.items():
-            by_cls.setdefault(cls, []).append((gid, day, start_min, end_min))
-
-        # Color map by course code
-        course_codes = sorted(set(gid.rsplit('-G', 1)[0] for gid in assignments))
+        by_classroom: dict[str, list] = {}
+        for gid, (classroom, day, start, end) in assignments.items():
+            by_classroom.setdefault(classroom, []).append((gid, day, start, end))
+        course_codes = sorted({self._group_parts(gid)[0] for gid in assignments})
         course_colors = {
-            code: _COLOR_PALETTE[i % len(_COLOR_PALETTE)]
-            for i, code in enumerate(course_codes)
+            code: course_color(code) for code in course_codes
         }
-
-        used: set[str] = set()
-        for cls in sorted(by_cls):
-            sheet_name = self._safe_sheet_name(f"Aula {cls}", used)
+        used = {"Asignaciones", "Por Aula"}
+        for classroom in sorted(by_classroom):
+            sheet_name = self._safe_sheet_name(f"Aula {classroom}", used)
             used.add(sheet_name)
-            self._write_single_grid(writer, sheet_name, cls,
-                                    by_cls[cls], name_map, course_colors)
+            self._write_single_grid(
+                writer, sheet_name, classroom, by_classroom[classroom], name_map, course_colors,
+            )
 
-    def _write_single_grid(self, writer, sheet_name: str, classroom: str,
-                           entries: list, name_map: dict, course_colors: dict):
+    def _write_single_grid(self, writer, sheet_name, classroom,
+                           entries, name_map, course_colors):
         days = self.time_model.days
-        n_rows = _GRID_ROWS
+        # Print only the occupied time range; exact sessions use the same
+        # projection as the viewer without pages of leading/trailing blanks.
+        grid = build_schedule_grid(
+            entries, min(entry[2] for entry in entries), max(entry[3] for entry in entries),
+        )
+        ws = writer.book.create_sheet(sheet_name)
         n_cols = len(days) + 1
-
-        # Build empty DataFrame
-        time_labels = [TimeModel.minutes_to_hhmm(_GRID_START + r * _GRID_STEP)
-                       for r in range(n_rows)]
-        data = {d: [""] * n_rows for d in days}
-        data = {"Hora": time_labels, **data}
-        df = pd.DataFrame(data)
-        df.to_excel(writer, sheet_name=sheet_name, index=False)
-
-        ws = writer.sheets[sheet_name]
-
-        # Style header
-        for cell in ws[1]:
-            cell.fill = _HEADER_FILL
-            cell.font = _HEADER_FONT
-            cell.alignment = _HEADER_ALIGN
-            cell.border = _THIN_BORDER
-
-        # Style hour column + empty cells
-        empty_fill  = PatternFill(start_color="FAFAFA", end_color="FAFAFA", fill_type="solid")
-        center      = Alignment(horizontal="center", vertical="center", wrap_text=True)
-
-        for r in range(n_rows):
-            excel_row = r + 2
-            ws.cell(excel_row, 1).fill      = _HOUR_FILL
-            ws.cell(excel_row, 1).font      = Font(bold=True, size=9)
-            ws.cell(excel_row, 1).alignment = center
-            ws.cell(excel_row, 1).border    = _THIN_BORDER
-            for c in range(2, n_cols + 1):
-                cell = ws.cell(excel_row, c)
-                cell.fill      = empty_fill
-                cell.alignment = center
-                cell.border    = _THIN_BORDER
-
-        # Place course blocks with merge
-        occupied: dict[tuple, bool] = {}
-        for gid, day, start_min, end_min in sorted(entries, key=lambda e: e[2]):
-            day_name = self.time_model.to_day_name(day)
-            if day_name not in days:
-                continue
-            col = days.index(day_name) + 2  # +2: 1-based + hour col
-
-            start_row = (start_min - _GRID_START) // _GRID_STEP
-            duration  = end_min - start_min
-            span      = max(1, (duration + _GRID_STEP - 1) // _GRID_STEP)
-            if start_row < 0 or start_row >= n_rows:
-                continue
-            span = min(span, n_rows - start_row)
-
-            # Shrink if overlap
-            for r in range(start_row, start_row + span):
-                if (r, col) in occupied:
-                    span = r - start_row
-                    break
-            if span < 1:
-                continue
-            for r in range(start_row, start_row + span):
-                occupied[(r, col)] = True
-
-            code      = gid.rsplit("-G", 1)[0]
-            group_num = gid.split("-P", 1)[0].rsplit("-G", 1)[1]
-            name      = name_map.get(gid, "")
-            time_lbl  = f"{TimeModel.minutes_to_hhmm(start_min)}–{TimeModel.minutes_to_hhmm(end_min)}"
-            text      = f"{code}\n{name}\nG{group_num}\n{time_lbl}" if name else f"{code}\nG{group_num}\n{time_lbl}"
-
-            hex_color  = course_colors.get(code, _COLOR_PALETTE[0])
-            course_fill = PatternFill(start_color=hex_color, end_color=hex_color, fill_type="solid")
-
-            excel_row = start_row + 2
-            cell = ws.cell(excel_row, col)
-            cell.value     = text
-            cell.fill      = course_fill
-            cell.font      = Font(bold=True, size=9)
+        header_row = 3
+        first_data_row = header_row + 1
+        ws.sheet_view.showGridLines = False
+        ws.freeze_panes = "B4"
+        ws.sheet_properties.tabColor = "1967D2"
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n_cols)
+        room_label = str(classroom) if str(classroom).casefold().startswith("aula ") else f"Aula {classroom}"
+        ws.cell(1, 1, self._safe_text(f"Horario · {room_label}"))
+        ws.cell(1, 1).font = Font(name="Calibri", size=16, bold=True, color=GRID_TEXT_COLOR)
+        ws.cell(1, 1).alignment = Alignment(vertical="center", wrap_text=True)
+        ws.row_dimensions[1].height = max(34, self._line_count(classroom, 100) * 20)
+        ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=n_cols)
+        ws.cell(2, 1, "Horas exactas · Un color por curso · CONFLICTO indica sesiones simultáneas")
+        ws.cell(2, 1).font = Font(name="Calibri", size=10, color="526577")
+        ws.cell(2, 1).alignment = Alignment(vertical="center", wrap_text=True)
+        ws.row_dimensions[2].height = 30
+        for column, label in enumerate(["Hora"] + days, 1):
+            cell = ws.cell(header_row, column, self._safe_text(label))
+            self._style_header(cell)
+        ws.row_dimensions[header_row].height = 27
+        center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        for row, minute in enumerate(grid.boundaries[:-1], first_data_row):
+            cell = ws.cell(row, 1, TimeModel.minutes_to_hhmm(minute))
+            cell.fill = _HOUR_FILL
+            cell.font = Font(name="Calibri", bold=True, size=10, color=GRID_TEXT_COLOR)
             cell.alignment = center
-            cell.border    = _THIN_BORDER
+            cell.border = _THIN_BORDER
+            ws.row_dimensions[row].height = 34
+            for column in range(2, n_cols + 1):
+                cell = ws.cell(row, column)
+                cell.fill = _EMPTY_FILL
+                cell.alignment = center
+                cell.border = _THIN_BORDER
 
-            if span > 1:
-                ws.merge_cells(
-                    start_row=excel_row, start_column=col,
-                    end_row=excel_row + span - 1, end_column=col
+        for block in grid.blocks:
+            day_name = self.time_model.to_day_name(block.day)
+            column = days.index(day_name) + 2
+            row = block.row + first_data_row
+            texts = [self._grid_entry_text(entry, name_map) for entry in block.entries]
+            conflict = len(block.entries) > 1
+            text = "\n\n".join(texts)
+            if conflict:
+                text = f"CONFLICTO: {len(block.entries)} sesiones\n\n{text}"
+            code = self._group_parts(block.entries[0][0])[0]
+            fill = _CONFLICT_FILL if conflict else PatternFill(
+                "solid", fgColor=course_colors.get(code, COURSE_COLORS[0]),
+            )
+            for block_row in range(row, row + block.span):
+                ws.cell(block_row, column).fill = fill
+            cell = ws.cell(row, column, self._safe_text(text))
+            cell.font = Font(name="Calibri", bold=True, size=10,
+                             color="9C2F21" if conflict else GRID_TEXT_COLOR)
+            cell.alignment = center
+            # Excel does not autofit merged cells. Allocate enough total height
+            # for wrapped labels, including sub-half-hour and conflict blocks.
+            height = ceil((self._line_count(text, 24) * 14 + 12) / block.span)
+            for block_row in range(row, row + block.span):
+                ws.row_dimensions[block_row].height = min(
+                    409, max(ws.row_dimensions[block_row].height, height),
                 )
+            if block.span > 1:
+                ws.merge_cells(start_row=row, start_column=column,
+                               end_row=row + block.span - 1, end_column=column)
 
-        # Column widths / row heights
-        ws.column_dimensions["A"].width = 7
-        for c in range(2, n_cols + 1):
-            ws.column_dimensions[get_column_letter(c)].width = 22
-        ws.row_dimensions[1].height = 20
-        for r in range(2, n_rows + 2):
-            ws.row_dimensions[r].height = 38
+        ws.column_dimensions["A"].width = 10
+        for column in range(2, n_cols + 1):
+            ws.column_dimensions[get_column_letter(column)].width = 27
+        self._configure_print(ws, "1:3")
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
+    def _grid_entry_text(self, entry, name_map):
+        gid, _, start, end = entry
+        parts = [gid, name_map.get(gid, ""),
+                 f"{TimeModel.minutes_to_hhmm(start)}–{TimeModel.minutes_to_hhmm(end)}"]
+        return "\n".join(str(part) for part in parts if part)
+
+    @staticmethod
+    def _style_header(cell):
+        cell.fill = _HEADER_FILL
+        cell.font = _HEADER_FONT
+        cell.alignment = _HEADER_ALIGN
+        cell.border = _THIN_BORDER
+
+    @staticmethod
+    def _configure_print(ws, repeat_rows):
+        ws.print_title_rows = repeat_rows
+        ws.print_area = ws.dimensions
+        ws.page_setup.orientation = "landscape"
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.page_margins = PageMargins(left=0.25, right=0.25, top=0.4, bottom=0.4,
+                                      header=0.2, footer=0.2)
+        ws.oddFooter.left.text = "SORTH"
+        ws.oddFooter.right.text = "Página &P de &N"
+
+    @staticmethod
+    def _line_count(value, width):
+        return sum(max(1, ceil(len(line) / width)) for line in str(value or "").split("\n"))
+
+    @staticmethod
+    def _safe_text(value):
+        """Neutralize spreadsheet formula prefixes without altering ordinary text.
+
+        CSV quoting alone does not prevent formula evaluation. A leading
+        apostrophe is intentionally retained in both formats for parity, even
+        when an importer trims whitespace before interpreting a formula.
+        """
+        if not isinstance(value, str) or not value:
+            return value
+        candidate = value.lstrip(" \t\r\n\v\f\ufeff")
+        unsafe = value.startswith(("\t", "\r", "\n")) or candidate.startswith(("=", "+", "-", "@"))
+        # XML 1.0 cannot encode these pasted control characters. Normalize
+        # identically in CSV so both exported tables retain the same values.
+        value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", value)
+        value = value.replace("\r\n", "\n").replace("\r", "\n")
+        return "'" + value if unsafe else value
+
+    @staticmethod
+    def _group_parts(gid):
+        code, group = gid.rsplit("-G", 1)
+        return code, group.split("-P", 1)[0]
 
     def _build_name_map(self, assignments: dict, groups, course_name_by_code) -> dict:
         name_map = {}
-        if groups:
-            for g in groups:
-                if g.course_name:
-                    name_map[g.group_id] = g.course_name
+        for group in groups or []:
+            if group.course_name:
+                name_map[group.group_id] = group.course_name
         course_name_by_code = course_name_by_code or {}
         for gid in assignments:
             if gid not in name_map:
-                code = gid.rsplit("-G", 1)[0]
+                code = self._group_parts(gid)[0]
                 if code in course_name_by_code:
                     name_map[gid] = course_name_by_code[code]
         return name_map
 
-    def _safe_sheet_name(self, name: str, used: set) -> str:
-        for ch in r'\/*?:[]':
-            name = name.replace(ch, "-")
-        name = name[:31]
-        if name not in used:
+    @staticmethod
+    def _safe_sheet_name(name: str, used: set) -> str:
+        name = re.sub(r"[\\/*?:\[\]\x00-\x1f]", "-", str(name)).strip("'")
+        name = name[:31].rstrip("'") or "Hoja"
+        used_names = {item.casefold() for item in used}
+        if name.casefold() not in used_names:
             return name
-        i = 2
+        index = 2
         while True:
-            candidate = f"{name[:28]}_{i}"
-            if candidate not in used:
+            suffix = f"_{index}"
+            candidate = f"{name[:31 - len(suffix)]}{suffix}"
+            if candidate.casefold() not in used_names:
                 return candidate
-            i += 1
+            index += 1

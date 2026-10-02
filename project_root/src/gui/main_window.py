@@ -68,7 +68,7 @@ class MainWindow(QMainWindow):
         self.schedule_viewer.edit_course_requested.connect(self._edit_course_from_viewer)
         self.schedule_viewer.group_removed.connect(self._on_group_removed)
         self.schedule_viewer.schedule_cleared.connect(self._on_schedule_cleared)
-        main_layout.addWidget(self.tabs)
+        main_layout.addWidget(self.tabs, 1)
 
         main_layout.addLayout(self._create_actions_section())
 
@@ -189,14 +189,18 @@ class MainWindow(QMainWindow):
         self.btn_generate.clicked.connect(self._generate_schedule)
         self.btn_generate.setEnabled(False)
 
-        self.btn_export = QPushButton("Exportar resultados")
+        self.btn_export = QPushButton("Exportar completo")
         self.btn_export.setShortcut("Ctrl+S")
         self.btn_export.setToolTip(
             "Guardar el horario generado en formato Excel (.xlsx) o CSV.\n"
             "El Excel incluye una grilla visual por aula."
         )
-        self.btn_export.clicked.connect(self._export_schedule)
+        self.btn_export.clicked.connect(lambda: self._export_schedule())
         self.btn_export.setEnabled(False)
+        self.btn_export_filtered = QPushButton("Exportar filtrado (0)")
+        self.btn_export_filtered.setEnabled(False)
+        self.btn_export_filtered.clicked.connect(lambda: self._export_schedule(filtered=True))
+        self.schedule_viewer.filters_changed.connect(self._update_export_actions)
 
         layout.addStretch()
         layout.addWidget(seed_label)
@@ -204,6 +208,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.seed_input)
         layout.addWidget(self.btn_generate)
         layout.addWidget(self.btn_export)
+        layout.addWidget(self.btn_export_filtered)
 
         return layout
 
@@ -347,7 +352,7 @@ class MainWindow(QMainWindow):
                 assignments, time_model, groups, course_name_map
             )
             self.tabs.setCurrentIndex(1)
-            self.btn_export.setEnabled(True)
+            self._update_export_actions()
 
             total      = len(groups)
             assigned   = len(assignments)
@@ -381,37 +386,56 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("❌ Error al generar horario")
         _InfoDialog(self, "Error", f"Error al generar el horario:\n{message}", warning=True).exec()
 
-    def _export_schedule(self):
+    def _update_export_actions(self):
+        if not hasattr(self, "btn_export_filtered"):
+            return
+        count = len(self.schedule_viewer.filtered_assignments())
+        ready = not self._busy and bool(self.current_schedule)
+        self.btn_export.setEnabled(ready)
+        self.btn_export_filtered.setText(f"Exportar filtrado ({count})")
+        self.btn_export_filtered.setEnabled(ready and count > 0)
+        self.btn_export_filtered.setToolTip(
+            f"Exportar {count} sesiones asignadas que coinciden con Buscar, Aula, Día y Estado.\n"
+            "La pestaña activa y el selector del aula de la cuadrícula no cambian este conjunto."
+        )
+
+    def _export_schedule(self, filtered=False):
+        if self._busy:
+            return
         if not self.current_schedule:
             QMessageBox.warning(self, "Advertencia", "No hay horario para exportar.")
             return
-
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Guardar horario", "horario.xlsx",
+        assignments = (self.schedule_viewer.filtered_assignments() if filtered
+                       else dict(self.current_schedule))
+        if not assignments:
+            QMessageBox.information(self, "Sin coincidencias",
+                                    "No hay sesiones asignadas con estos filtros. Cambie o restablezca los filtros.")
+            return
+        scope = "filtrado" if filtered else "completo"
+        count = len(assignments)
+        file_path, selected_format = QFileDialog.getSaveFileName(
+            self, f"Guardar horario {scope} · {count} sesiones",
+            "horario_filtrado.xlsx" if filtered else "horario.xlsx",
             "Excel Files (*.xlsx);;CSV Files (*.csv)"
         )
         if not file_path:
             return
+        if not Path(file_path).suffix:
+            file_path += ".csv" if selected_format.startswith("CSV") else ".xlsx"
 
         try:
             time_model = TimeModel.default()
             exporter = ScheduleExporter(time_model)
             courses = self.course_manager.get_courses()
             course_name_map = {c.code: c.name for c in courses if c.name}
-
-            if file_path.endswith(".csv"):
-                exporter.to_csv(self.current_schedule, file_path,
-                                groups=self.current_groups,
+            if file_path.lower().endswith(".csv"):
+                exporter.to_csv(assignments, file_path, groups=self.current_groups,
                                 course_name_by_code=course_name_map)
             else:
-                exporter.to_excel(self.current_schedule, file_path,
-                                  groups=self.current_groups,
-                                  course_name_by_code=course_name_map,
-                                  include_grid=True)
-
-            self.status_bar.showMessage(f"✅ Exportado a {Path(file_path).name}")
-            _InfoDialog(self, "Éxito", f"Horario exportado a:\n{file_path}").exec()
-
+                exporter.to_excel(assignments, file_path, groups=self.current_groups,
+                                  course_name_by_code=course_name_map, include_grid=True)
+            self.status_bar.showMessage(f"Horario {scope}: {count} sesiones exportadas a {Path(file_path).name}")
+            _InfoDialog(self, "Éxito", f"Horario {scope}: {count} sesiones exportadas a:\n{file_path}").exec()
         except Exception as e:
             _InfoDialog(self, "Error", f"Error al exportar:\n{str(e)}", warning=True).exec()
 
@@ -523,7 +547,7 @@ class MainWindow(QMainWindow):
                 self.schedule_viewer.display_schedule(
                     data["assignments"], time_model, groups, course_name_map
                 )
-                self.btn_export.setEnabled(True)
+                self._update_export_actions()
 
             self._refresh_overview()
             self.status_bar.showMessage("✅ Sesión restaurada correctamente.")
@@ -544,14 +568,14 @@ class MainWindow(QMainWindow):
                 if g.group_id == gid and g.is_assigned():
                     g.assignment = None
 
-        self.btn_export.setEnabled(bool(self.current_schedule))
+        self._update_export_actions()
         self._refresh_overview()
         self._save_session()
 
     def _on_schedule_cleared(self):
         self.current_schedule = None
         self.current_groups = None
-        self.btn_export.setEnabled(False)
+        self._update_export_actions()
         self._refresh_overview()
         self.status_bar.showMessage("Horario eliminado.")
         self._save_session()
@@ -576,7 +600,7 @@ class MainWindow(QMainWindow):
         self.current_schedule = None
         self.current_groups = None
         self.schedule_viewer._clear()
-        self.btn_export.setEnabled(False)
+        self._update_export_actions()
 
     def _on_inputs_changed(self):
         if self._loading:
@@ -596,7 +620,7 @@ class MainWindow(QMainWindow):
         self.btn_restrictions.setEnabled(not busy and bool(self._classroom_course_map))
         self.btn_generate.setEnabled(not busy and bool(self._classrooms and self.course_manager.get_courses()))
         self.btn_generate.setText("Generando…" if busy else "Generar horario")
-        self.btn_export.setEnabled(not busy and bool(self.current_schedule))
+        self._update_export_actions()
         self._progress.setVisible(busy)
 
     def closeEvent(self, event):
