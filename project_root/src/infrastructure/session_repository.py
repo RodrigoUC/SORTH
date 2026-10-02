@@ -1,6 +1,10 @@
 # src/infrastructure/session_repository.py
 
 import sqlite3
+import os
+import sys
+import tempfile
+from contextlib import contextmanager, closing
 from pathlib import Path
 
 from ..scheduling.classroom import Classroom
@@ -15,21 +19,72 @@ class SessionRepository:
     restrictions, the last generated schedule (assignments), and session
     metadata (excel path, seed).
 
-    The database is a single file: data/sorth_session.db
+    The database lives in the current user's SORTH application-data directory.
     """
 
+    @staticmethod
+    def default_path() -> Path:
+        """Stable writable user data, independent of installation/update folders."""
+        if sys.platform == "win32":
+            base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+        elif sys.platform == "darwin":
+            base = Path.home() / "Library" / "Application Support"
+        else:
+            candidate = Path(os.environ.get("XDG_DATA_HOME", ""))
+            base = candidate if candidate.is_absolute() else Path.home() / ".local" / "share"
+        return base / "SORTH" / "sorth_session.db"
+
+    @staticmethod
+    def legacy_path() -> Path:
+        base = (Path(sys.executable).parent if getattr(sys, "frozen", False)
+                else Path(__file__).resolve().parents[2])
+        return base / "data" / "sorth_session.db"
+
     def __init__(self, db_path: str | None = None):
+        self.migration_backup: Path | None = None
+        target = Path(db_path) if db_path is not None else self.default_path()
+        self._db_path = str(target)
         if db_path is None:
-            import sys
-            if getattr(sys, 'frozen', False):
-                # Running as .exe: save next to the executable
-                base = Path(sys.executable).parent / "data"
-            else:
-                base = Path(__file__).parent.parent.parent / "data"
-            base.mkdir(exist_ok=True)
-            db_path = str(base / "sorth_session.db")
-        self._db_path = db_path
+            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            legacy = self.legacy_path()
+            # Any existing destination wins, even when corrupt or empty. Never
+            # replace user data with an older copy or silently fall back.
+            if not target.exists() and legacy.exists() and legacy != target:
+                backup = self._snapshot(legacy, target.parent, "legacy-session-")
+                self.migration_backup = backup
+                staged = self._snapshot(backup, target.parent, ".migration-")
+                try:
+                    # Atomic, no-clobber installation. A competing instance wins.
+                    os.link(staged, target)
+                except FileExistsError:
+                    pass
+                finally:
+                    staged.unlink(missing_ok=True)
         self._init_db()
+
+    @staticmethod
+    def _snapshot(source: Path, directory: Path, prefix: str) -> Path:
+        """Create an independent consistent SQLite backup; preserve source/WAL."""
+        fd, name = tempfile.mkstemp(prefix=prefix, suffix=".db", dir=directory)
+        os.close(fd)
+        snapshot = Path(name)
+        try:
+            with closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)) as src:
+                if src.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                    raise sqlite3.DatabaseError("SQLite integrity check failed")
+                with closing(sqlite3.connect(snapshot)) as dst:
+                    src.backup(dst)
+            with snapshot.open("rb+") as stream:
+                os.fsync(stream.fileno())
+            return snapshot
+        except Exception:
+            # Only our new temporary file is removed; the source is untouched.
+            snapshot.unlink(missing_ok=True)
+            raise
+
+    def backup_session(self) -> Path:
+        path = Path(self._db_path)
+        return self._snapshot(path, path.parent, "previous-session-")
 
     # ------------------------------------------------------------------
     # Schema
@@ -100,10 +155,15 @@ class SessionRepository:
                     "ALTER TABLE courses ADD COLUMN size INTEGER NOT NULL DEFAULT 0"
                 )
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self):
         con = sqlite3.connect(self._db_path)
         con.row_factory = sqlite3.Row
-        return con
+        try:
+            with con:
+                yield con
+        finally:
+            con.close()
 
     # ------------------------------------------------------------------
     # Save

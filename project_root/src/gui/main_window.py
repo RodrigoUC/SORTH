@@ -37,12 +37,28 @@ class MainWindow(QMainWindow):
         self.classroom_restrictions: dict[str, set[str]] = {}
         self._classroom_course_map: dict[str, list[str]] = {}
         self._classrooms: dict[str, Classroom] = {}
-        self._repo = repo if repo is not None else SessionRepository()
+        self._unsaved = False
+        self._save_error = None
+        self._restore_failed = False
+        self._preserve_previous = False
+        self._repo = repo
+        if self._repo is None:
+            try:
+                self._repo = SessionRepository()
+            except Exception as error:
+                self._save_error = str(error)
+                self._restore_failed = True
 
         self._motion = MotionController(self)
         self._init_ui()
-        if restore_session:
+        self._update_save_state()
+        if self._restore_failed:
+            self._record_save_error(self._save_error)
+            self._block_for_recovery()
+        if restore_session and self._repo is not None:
             self._restore_session_if_exists()
+        self.chk_random_seed.toggled.connect(self._save_session)
+        self.seed_input.valueChanged.connect(self._save_session)
 
     def _init_ui(self):
         self.setWindowTitle("SORTH - Sistema de Organización de Horarios")
@@ -95,6 +111,12 @@ class MainWindow(QMainWindow):
         self.status_bar.addPermanentWidget(self.chk_reduce_motion)
         update_busy_indicator(self._progress, False, self._motion.reduced)
 
+        self._save_state_label = QLabel()
+        self._save_state_label.setAccessibleName("Estado de guardado")
+        self._retry_save_button = QPushButton("Reintentar")
+        self._retry_save_button.clicked.connect(self._retry_session)
+        self.status_bar.addPermanentWidget(self._save_state_label)
+        self.status_bar.addPermanentWidget(self._retry_save_button)
         self.status_bar.showMessage("Listo. Cargue un archivo Excel para comenzar.")
 
     # ------------------------------------------------------------------
@@ -479,10 +501,55 @@ class MainWindow(QMainWindow):
     # Session persistence
     # ------------------------------------------------------------------
 
-    def _save_session(self):
+    def _update_save_state(self):
+        if self._save_error:
+            text = "Sesión no disponible" if self._restore_failed else "Cambios sin guardar"
+        else:
+            text = "Cambios sin guardar" if self._unsaved else "Sin cambios pendientes"
+        self._save_state_label.setText(text)
+        self._save_state_label.setToolTip(self._save_error or "")
+        self._retry_save_button.setVisible(bool(self._save_error))
+
+    def _record_save_error(self, error):
+        self._save_error = str(error)
+        self._update_save_state()
+        self.status_bar.showMessage(f"No se pudo guardar o recuperar la sesión: {error}")
+
+    def _block_for_recovery(self):
+        self._set_busy(True)
+        self._progress.setVisible(False)
+        self.btn_generate.setText("Recuperación pendiente")
+
+    def _retry_session(self):
+        if self._restore_failed:
+            # Do not write an empty/new working session over unreadable data.
+            # Keep editing disabled until the original session is readable.
+            try:
+                if self._repo is None:
+                    self._repo = SessionRepository()
+                    self.course_manager._repo = self._repo
+                self._repo.load_session()
+                self._restore_failed = False
+                self._save_error = None
+                self._set_busy(False)
+                self._restore_session_if_exists()
+                self._update_save_state()
+            except Exception as error:
+                self._record_save_error(error)
+            return not self._restore_failed
+        return self._save_session()
+
+    def _save_session(self, *_):
         if self._loading:
-            return
+            return True
+        self._unsaved = True
+        if self._restore_failed:
+            self._update_save_state()
+            return False
         try:
+            if self._preserve_previous:
+                self._repo.backup_session()
+                self._preserve_previous = False
             seed = None if self.chk_random_seed.isChecked() else self.seed_input.value()
             self._repo.save_session(
                 excel_path=self.excel_path,
@@ -493,10 +560,24 @@ class MainWindow(QMainWindow):
                 assignments=self.current_schedule,
             )
         except Exception as error:
-            self.status_bar.showMessage(f"No se pudo guardar la sesión: {error}")
+            self._record_save_error(error)
+            return False
+        self._unsaved = False
+        self._save_error = None
+        self._update_save_state()
+        return True
 
     def _restore_session_if_exists(self):
-        if not self._repo.has_session():
+        try:
+            if not self._repo.has_session():
+                return
+            # Validate and deserialize before offering a restore or permitting
+            # writes. Malformed sessions must remain recoverable on disk.
+            data = self._repo.load_session()
+        except Exception as error:
+            self._restore_failed = True
+            self._record_save_error(error)
+            self._block_for_recovery()
             return
 
         dlg = QDialog(self)
@@ -530,9 +611,9 @@ class MainWindow(QMainWindow):
         dlg.setLayout(outer)
 
         if dlg.exec() != QDialog.DialogCode.Accepted:
-            return  # user said No — app starts normally with empty state
+            self._preserve_previous = True
+            return  # Keep the previous session until actual edits, then back it up.
         try:
-            data = self._repo.load_session()
             if not data:
                 return
 
@@ -555,7 +636,6 @@ class MainWindow(QMainWindow):
 
             self._loading = True
             self.course_manager.load_courses_from_excel(data["courses"])
-            self._loading = False
 
             self.chk_random_seed.setChecked(data["seed"] is None)
             if data["seed"] is not None:
@@ -586,10 +666,16 @@ class MainWindow(QMainWindow):
                 self._update_export_actions()
 
             self._refresh_overview()
+            self._loading = False
+            self._unsaved = False
+            self._save_error = None
+            self._update_save_state()
             self.status_bar.showMessage("✅ Sesión restaurada correctamente.")
         except Exception as e:
             self._loading = False
-            self.status_bar.showMessage(f"⚠️ No se pudo restaurar la sesión: {e}")
+            self._restore_failed = True
+            self._record_save_error(e)
+            self._block_for_recovery()
 
     def _edit_course_from_viewer(self, course_code: str):
         """Open CourseDialog for the given course code from the schedule viewer."""
@@ -669,7 +755,25 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self._motion.finish()
-        self._save_session()
+        if not self._unsaved:
+            event.accept()
+            return
+        while not self._save_session():
+            choice = QMessageBox.warning(
+                self, "Cambios sin guardar",
+                "No se pudo guardar la sesión. Si sales, perderás los cambios sin guardar."
+                "\nEl último guardado y las copias existentes se conservarán."
+                f"\n\n{self._save_error or ''}",
+                QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if choice == QMessageBox.StandardButton.Discard:
+                event.accept()
+                return
+            if choice != QMessageBox.StandardButton.Retry:
+                event.ignore()
+                return
         event.accept()
 
     def _set_window_icon(self):

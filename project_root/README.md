@@ -331,7 +331,7 @@ project_root/
 - `TimeModel` con `DAY_END = 22 * 60`
 
 #### Persistencia (`src/infrastructure/session_repository.py`)
-- **SQLite** (`data/sorth_session.db`): almacena aulas, cursos con sugerencias por grupo, restricciones, asignaciones y metadatos (ruta Excel, semilla)
+- **SQLite** (la carpeta de datos del usuario (`%LOCALAPPDATA%/SORTH/sorth_session.db` en Windows)): almacena aulas, cursos con sugerencias por grupo, restricciones, asignaciones y metadatos (ruta Excel, semilla)
 - **Esquema relacional**: tablas `session`, `classrooms`, `courses`, `course_group_suggestions`, `restrictions`, `assignments`
 - **Guardado automático**: se invoca tras cada acción relevante (cargar Excel, editar cursos, generar horario, eliminar grupo)
 - **Restauración al inicio**: si existe sesión guardada con cursos, se ofrece restaurarla mediante diálogo al abrir la aplicación
