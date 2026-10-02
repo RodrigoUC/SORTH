@@ -1,5 +1,16 @@
 # SORTH - Sistema de Organización de Horarios
 
+## Comunidad y estado del proyecto
+
+El código propio de SORTH está bajo [GPL-3.0-only](LICENSING.md). Los recursos de terceros conservan sus licencias; algunos permisos de redistribución siguen en revisión antes de una release pública.
+
+- [Contribuir](CONTRIBUTING.md) · [Soporte por Issues](SUPPORT.md) · [Seguridad](SECURITY.md)
+- [Guía de convivencia](CODE_OF_CONDUCT.md) · [Créditos](CREDITS.md) · [Revisión de licencias](docs/LICENSING_REVIEW.md)
+- [Limitaciones conocidas](docs/KNOWN_LIMITATIONS.md) · [Checklist de releases](docs/RELEASING.md)
+- [Instalar y ejecutar desde código](project_root/README.md) · [Distribución Windows](project_root/WINDOWS_DISTRIBUTION.md)
+
+Los reportes pueden escribirse en español o inglés. Utiliza datos sintéticos: los issues son públicos.
+
 ## Repositorio de GITHUB
 https://github.com/RodrigoUC/SORTH
 
@@ -17,11 +28,11 @@ La creación manual de horarios académicos es un problema complejo que implica:
 - Cumplimiento de restricciones múltiples (aulas reservadas, horarios preferidos, etc.)
 
 ### Solución
-SORTH implementa un **algoritmo Greedy con reintentos** y heurísticas inteligentes para resolver automáticamente estas asignaciones en tiempo real, garantizando soluciones válidas respetando todas las restricciones definidas.
+SORTH implementa un **algoritmo Greedy con reintentos** y heurísticas inteligentes para resolver automáticamente estas asignaciones en tiempo real, buscando asignaciones que respeten las restricciones implementadas. Puede dejar grupos sin asignar; no garantiza una solución completa ni óptima.
 
 ## Características Técnicas Principales
 
-- **Algoritmo Greedy con reintentos** — O(n) en lugar de backtracking exponencial. Ordena grupos por dominio más pequeño (MRV), asigna el mejor candidato disponible, y hace hasta 3 reintentos con preferencias relajadas para grupos sin asignar
+- **Algoritmo Greedy con reintentos** — evita explorar todo el árbol de backtracking. Ordena grupos por dominio más pequeño (MRV), asigna el mejor candidato disponible, y hace hasta 3 reintentos con preferencias relajadas para grupos sin asignar
 - **Contadores incrementales** — scoring O(1) por lookup en lugar de O(n²) por iteración sobre asignaciones
 - **Modelo de intervalos en minutos** — soporta horarios con cualquier granularidad (ej: 08:00–10:55)
 - **Preferencias blandas** — día y hora preferidos son sugerencias, no restricciones duras. Si no hay espacio en el slot preferido, el grupo se asigna en otro horario
@@ -66,7 +77,7 @@ El sistema lee un único archivo Excel con dos hojas:
 
 ## Tecnologías Utilizadas
 
-- **Python 3.13+**: Lenguaje principal
+- **Python**: referencia de empaquetado Windows CPython 3.12.10 x64
 - **PyQt6**: Framework para interfaz gráfica de escritorio
 - **pandas**: Procesamiento y manipulación de datos
 - **openpyxl**: Lectura y escritura de archivos Excel
@@ -102,7 +113,7 @@ La distribución predeterminada para Windows es una carpeta con `SORTH.exe` y su
 ### v2.0
 
 #### Algoritmo
-- **Reemplazo de backtracking por Greedy con reintentos**: elimina el congelamiento de la GUI con datasets grandes (250+ grupos). Complejidad O(n) en lugar de O(n!)
+- **Reemplazo de backtracking por Greedy con reintentos**: elimina el congelamiento de la GUI con datasets grandes (250+ grupos). El tiempo depende de grupos, aulas, candidatos y restricciones
 - **Contadores incrementales**: `_day_load`, `_time_load`, `_classroom_uses`, `_course_slots` se actualizan en O(1) al asignar, eliminando el O(n²) oculto en el scoring
 - **Preferencias blandas**: día y hora preferidos ya no son restricciones duras en `_build_domains`. Pass 1 respeta preferencias; reintentos las relajan para grupos sin asignar
 - **Sugerencias por grupo individual**: cada grupo lleva su propia `suggested_classroom`, `preferred_day` y `preferred_start_min` desde el Excel, en lugar de compartir el valor más común del curso

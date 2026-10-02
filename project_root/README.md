@@ -5,9 +5,11 @@ https://github.com/RodrigoUC/SORTH
 
 ## Descripción
 
-SORTH es una aplicación de escritorio con interfaz gráfica para la generación automática de horarios académicos. Utiliza un **algoritmo Greedy con reintentos** y contadores incrementales para asignar grupos de cursos a aulas disponibles en tiempo real, respetando restricciones de capacidad, tipo de sala, horarios preferidos y aulas reservadas.
+SORTH es una aplicación de escritorio con interfaz gráfica para la generación automática de horarios académicos. Utiliza un **algoritmo Greedy con reintentos** y contadores incrementales para asignar grupos de cursos a aulas disponibles en tiempo real, considerando capacidad y aulas reservadas, con tipo de sala y horarios como preferencias según las reglas del planificador. Puede dejar grupos sin asignar y requiere revisión humana.
 
 ---
+
+Consulta [contribución y pruebas](../CONTRIBUTING.md), [soporte](../SUPPORT.md), [seguridad](../SECURITY.md) y [limitaciones](../docs/KNOWN_LIMITATIONS.md). El código propio está bajo [GPL-3.0-only](../LICENSING.md); los recursos de terceros conservan sus licencias.
 
 ## Instalación
 
@@ -25,7 +27,7 @@ python -m venv venv
 
 ### 3. Instalar dependencias
 ```powershell
-pip install -r requeriments.txt
+python -m pip install -r requirements.txt
 ```
 
 ---
@@ -286,7 +288,7 @@ project_root/
 ### v2.0
 
 #### Algoritmo (`src/scheduling/scheduler.py`)
-- **Reemplazo de backtracking por Greedy con reintentos**: O(n) en lugar de O(n!). Elimina congelamiento con 250+ grupos
+- **Reemplazo de backtracking por Greedy con reintentos**: evita explorar el árbol completo. El tiempo depende de grupos, aulas, candidatos y restricciones
 - **Contadores incrementales**: `_day_load`, `_time_load`, `_classroom_uses`, `_course_slots` actualizados en O(1) al asignar
 - **Preferencias blandas**: pass 1 estricto + hasta 3 reintentos relajados para grupos sin asignar
 - **Sugerencias por grupo individual**: cada grupo lleva su propia `suggested_classroom`, `preferred_day` y `preferred_start_min`
@@ -348,7 +350,7 @@ project_root/
 
 ## Tecnologías
 
-- **Python 3.13+**
+- **Python 3.12.10 x64** como referencia del paquete Windows
 - **PyQt6**: Interfaz gráfica
 - **pandas**: Procesamiento de datos
 - **openpyxl**: Lectura/escritura de Excel
